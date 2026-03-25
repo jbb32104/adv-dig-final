@@ -32,7 +32,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. No `for` loops appear in any synthesis file; blocking and non-blocking assignments are in strictly separate `always` blocks
   4. Every flip-flop signal carries the `_ff` suffix; every active-low signal carries the `_n` suffix
   5. A self-checking testbench exists for `prime_engine.v` and passes with zero assertion failures in iVerilog and Vivado sim
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
 - [ ] 01-01: prime_engine.v — 6k±1 FSM (IDLE, CHECK_2_3, INIT_K, TEST_KM1, TEST_KP1, DONE states); synthesizable, no for loops
