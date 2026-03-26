@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-prime-engine-core/01-03-PLAN.md
-last_updated: "2026-03-26T01:55:42.906Z"
+stopped_at: Completed 02-prime-modes-fsm/02-03-PLAN.md
+last_updated: "2026-03-26T03:48:28.808Z"
 last_activity: 2026-03-26
 progress:
   total_phases: 7
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
+  total_plans: 7
+  completed_plans: 4
   percent: 0
 ---
 
@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-25)
 
 **Core value:** Correct, fast prime computation with a smooth VGA display — the 6k±1 algorithm must produce verified results with no screen tearing.
-**Current focus:** Phase 01 — prime-engine-core
+**Current focus:** Phase 02 — prime-modes-fsm
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
+Phase: 02 (prime-modes-fsm) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
 Last activity: 2026-03-26
 
@@ -54,6 +54,7 @@ Progress: [░░░░░░░░░░] 0%
 *Updated after each plan completion*
 | Phase 01-prime-engine-core P02 | 6 | 2 tasks | 4 files |
 | Phase 01-prime-engine-core P03 | 2 | 2 tasks | 0 files |
+| Phase 02-prime-modes-fsm P03 | 47min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -68,6 +69,8 @@ Recent decisions affecting current work:
 - [Phase 01-prime-engine-core]: Wire divider .divisor to next_d (comb) not d_ff (registered) to avoid one-cycle stale divisor when div_start fires
 - [Phase 01-prime-engine-core]: Use  golden list load guard (check golden[2]===1) to detect silently-zeroed memory on missing file
 - [Phase 01-prime-engine-core]: RTL audit plan 01-03: zero INFRA violations found -- divider.v and prime_engine.v were fully CSEE 4280 compliant from initial implementation
+- [Phase 02-prime-modes-fsm]: write_prime task requires idle posedge before write to avoid iVerilog BRAM scheduling race with prime_data changes
+- [Phase 02-prime-modes-fsm]: read_prime task requires idle posedge after deassert to prevent rd_ptr skipping in iVerilog simulation
 
 ### Pending Todos
 
@@ -80,6 +83,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-26T01:51:37.033Z
-Stopped at: Completed 01-prime-engine-core/01-03-PLAN.md
+Last session: 2026-03-26T03:48:28.805Z
+Stopped at: Completed 02-prime-modes-fsm/02-03-PLAN.md
 Resume file: None

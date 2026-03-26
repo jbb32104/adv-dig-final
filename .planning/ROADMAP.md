@@ -54,7 +54,7 @@ Plans:
 Plans:
 - [ ] 02-01-PLAN.md — elapsed_timer.v + prime_accumulator.v (supporting sub-modules: cycle/seconds counter with freeze, FIFO + count + ring buffer)
 - [ ] 02-02-PLAN.md — mode_fsm.v (9-state mode dispatcher: candidate enumeration, Mode 1/2/3 control, prime_engine handshake)
-- [ ] 02-03-PLAN.md — accumulator_tb.v (unit tests for prime_accumulator and elapsed_timer)
+- [x] 02-03-PLAN.md — accumulator_tb.v (unit tests for prime_accumulator and elapsed_timer)
 - [ ] 02-04-PLAN.md — mode_fsm_tb.v (integration test: all three modes through full module stack)
 
 ### Phase 3: DDR2 Integration
@@ -160,7 +160,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Prime Engine Core | 3/3 | Complete   | 2026-03-26 |
-| 2. Prime Modes FSM | 0/4 | Not started | - |
+| 2. Prime Modes FSM | 1/4 | In Progress|  |
 | 3. DDR2 Integration | 0/4 | Not started | - |
 | 4. VGA + Input Drivers | 0/5 | Not started | - |
 | 5. VGA UI | 0/5 | Not started | - |
