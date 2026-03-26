@@ -8,11 +8,11 @@
 ### Prime Engine
 
 - [x] **PRIME-01**: 6k±1 trial division engine implemented as a synthesizable FSM (no for loops, no blocking/non-blocking mixing)
-- [ ] **PRIME-02**: Mode 1 — find all primes ≤ N; N entered via joystick + 7SD (up to 8 decimal digits); store all found primes in DDR2
-- [ ] **PRIME-03**: Mode 2 — find all primes within T seconds; T entered via joystick + 7SD (1-second granularity, max 3600); store all found primes in DDR2
-- [ ] **PRIME-04**: Mode 3 — determine if entered number is prime; show elapsed time; freeze display on completion
-- [ ] **PRIME-05**: Running prime count and last 20 primes found updated live during Modes 1 and 2
-- [ ] **PRIME-06**: Elapsed time counter runs during active computation; freezes on mode completion
+- [x] **PRIME-02**: Mode 1 — find all primes ≤ N; N entered via joystick + 7SD (up to 8 decimal digits); store all found primes in DDR2
+- [x] **PRIME-03**: Mode 2 — find all primes within T seconds; T entered via joystick + 7SD (1-second granularity, max 3600); store all found primes in DDR2
+- [x] **PRIME-04**: Mode 3 — determine if entered number is prime; show elapsed time; freeze display on completion
+- [x] **PRIME-05**: Running prime count and last 20 primes found updated live during Modes 1 and 2
+- [x] **PRIME-06**: Elapsed time counter runs during active computation; freezes on mode completion
 
 ### Storage (DDR2 via MIG)
 
@@ -82,11 +82,11 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | PRIME-01 | Phase 1 | Complete |
-| PRIME-02 | Phase 2 | Pending |
-| PRIME-03 | Phase 2 | Pending |
-| PRIME-04 | Phase 2 | Pending |
-| PRIME-05 | Phase 2 | Pending |
-| PRIME-06 | Phase 2 | Pending |
+| PRIME-02 | Phase 2 | Complete |
+| PRIME-03 | Phase 2 | Complete |
+| PRIME-04 | Phase 2 | Complete |
+| PRIME-05 | Phase 2 | Complete |
+| PRIME-06 | Phase 2 | Complete |
 | DDR-01 | Phase 3 | Pending |
 | DDR-02 | Phase 3 | Pending |
 | DDR-03 | Phase 3 | Pending |
