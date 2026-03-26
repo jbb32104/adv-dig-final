@@ -11,9 +11,9 @@ module prime_engine #(
     input  wire             rst,
     input  wire             start,
     input  wire [WIDTH-1:0] candidate,
-    output wire             done_ff,
-    output wire             is_prime_ff,
-    output wire             busy_ff
+    output reg              done_ff,
+    output reg              is_prime_ff,
+    output reg              busy_ff
 );
 
     // State encoding (3-bit, 7 states)
@@ -31,8 +31,6 @@ module prime_engine #(
     reg [WIDTH-1:0] candidate_ff;
     reg [WIDTH-1:0] d_ff;
     reg [WIDTH-1:0] k_ff;
-    reg             is_prime_result_ff;
-    reg             done_out_ff;
 
     // Combinational next-state signals
     reg [2:0]       next_state;
@@ -41,6 +39,7 @@ module prime_engine #(
     reg [WIDTH-1:0] next_k;
     reg             next_is_prime_result;
     reg             next_done_out;
+    reg             next_busy;
     reg             div_start;
 
     // Bound check: d*d > candidate (strict >, uses DSP48 inference)
@@ -78,8 +77,9 @@ module prime_engine #(
         next_candidate       = candidate_ff;
         next_d               = d_ff;
         next_k               = k_ff;
-        next_is_prime_result = is_prime_result_ff;
+        next_is_prime_result = is_prime_ff;
         next_done_out        = 1'b0;  // done pulses one cycle; default off
+        next_busy            = 1'b0;
         div_start            = 1'b0;
 
         if (rst) begin
@@ -89,6 +89,7 @@ module prime_engine #(
             next_k               = {WIDTH{1'b0}};
             next_is_prime_result = 1'b0;
             next_done_out        = 1'b0;
+            next_busy            = 1'b0;
         end else begin
             case (state_ff)
 
@@ -197,6 +198,9 @@ module prime_engine #(
                 end
 
             endcase
+
+            // busy: high whenever FSM will be in an active (non-idle, non-done) state
+            next_busy = (next_state != IDLE) && (next_state != DONE);
         end
     end
 
@@ -206,21 +210,13 @@ module prime_engine #(
     //=====================================
 
     always @(posedge clk) begin
-        state_ff           <= next_state;
-        candidate_ff       <= next_candidate;
-        d_ff               <= next_d;
-        k_ff               <= next_k;
-        is_prime_result_ff <= next_is_prime_result;
-        done_out_ff        <= next_done_out;
+        state_ff    <= next_state;
+        candidate_ff <= next_candidate;
+        d_ff        <= next_d;
+        k_ff        <= next_k;
+        is_prime_ff <= next_is_prime_result;
+        done_ff     <= next_done_out;
+        busy_ff     <= next_busy;
     end
-
-
-    //=====================================
-    //========= OUTPUT ASSIGNMENTS ========
-    //=====================================
-
-    assign done_ff     = done_out_ff;
-    assign is_prime_ff = is_prime_result_ff;
-    assign busy_ff     = (state_ff != IDLE) && (state_ff != DONE);
 
 endmodule
