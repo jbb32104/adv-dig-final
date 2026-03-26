@@ -12,15 +12,16 @@ Correct, fast prime computation with a smooth VGA display — the 6k±1 algorith
 
 ### Validated
 
-(None yet — ship to validate)
+- [x] 6k±1 trial division prime engine — synthesizable, no for loops, FSM verified in sim (Validated in Phase 1: prime-engine-core)
+- [x] Mode 1: Find all primes ≤ N — mode_fsm correctly finds 25 primes ≤ 100 (Validated in Phase 2: prime-modes-fsm)
+- [x] Mode 2: Find all primes within T seconds — timer freezes at T, primes accumulate correctly (Validated in Phase 2: prime-modes-fsm)
+- [x] Mode 3: Determine if entered number is prime — correct for 97, 99, 2 edge case (Validated in Phase 2: prime-modes-fsm)
+- [x] Running prime count and last 20 primes updated live — prime_accumulator ring buffer verified (Validated in Phase 2: prime-modes-fsm)
+- [x] Elapsed time counter freezes on mode completion — elapsed_timer freeze confirmed (Validated in Phase 2: prime-modes-fsm)
 
 ### Active
 
 **Prime Algorithm**
-- [ ] 6k±1 trial division prime engine — synthesizable, no for loops, executes in hardware
-- [ ] Mode 1: Find all primes ≤ N (entered via joystick + 7SD), store results in DDR2
-- [ ] Mode 2: Find all primes within T seconds (1-second granularity, max 3600s), store results in DDR2
-- [ ] Mode 3: Determine if entered number is prime, show elapsed time
 - [ ] Mode 4: Test mode — compare DDR2-stored primes against SD card reference file, report pass/fail
 
 **Display (VGA)**
@@ -124,4 +125,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-25 after initialization*
+*Last updated: 2026-03-26 after Phase 2 (prime-modes-fsm) completion*
