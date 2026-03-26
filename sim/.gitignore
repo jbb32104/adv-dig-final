@@ -1,0 +1,3 @@
+# Compiled iVerilog simulation output (generated artifacts)
+*.vvp
+*.vcd
