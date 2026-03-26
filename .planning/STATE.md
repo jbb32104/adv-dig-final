@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-prime-engine-core/01-03-PLAN.md
-last_updated: "2026-03-26T01:55:42.906Z"
+stopped_at: Completed 02-prime-modes-fsm/02-01-PLAN.md
+last_updated: "2026-03-26T03:29:51.636Z"
 last_activity: 2026-03-26
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 3
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -54,6 +54,7 @@ Progress: [░░░░░░░░░░] 0%
 *Updated after each plan completion*
 | Phase 01-prime-engine-core P02 | 6 | 2 tasks | 4 files |
 | Phase 01-prime-engine-core P03 | 2 | 2 tasks | 0 files |
+| Phase 02-prime-modes-fsm P01 | 126 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -68,6 +69,9 @@ Recent decisions affecting current work:
 - [Phase 01-prime-engine-core]: Wire divider .divisor to next_d (comb) not d_ff (registered) to avoid one-cycle stale divisor when div_start fires
 - [Phase 01-prime-engine-core]: Use  golden list load guard (check golden[2]===1) to detect silently-zeroed memory on missing file
 - [Phase 01-prime-engine-core]: RTL audit plan 01-03: zero INFRA violations found -- divider.v and prime_engine.v were fully CSEE 4280 compliant from initial implementation
+- [Phase 02-prime-modes-fsm]: elapsed_timer uses plain integer comparison (tick_cnt_ff == TICK_PERIOD - 1) for iverilog compatibility
+- [Phase 02-prime-modes-fsm]: prime_accumulator last20 uses 20 individual output reg ports (Verilog-2001 forbids array port declarations)
+- [Phase 02-prime-modes-fsm]: fifo_count_ff is PTR_W+1 bits wide to unambiguously distinguish full (count==DEPTH) from empty (count==0)
 
 ### Pending Todos
 
@@ -80,6 +84,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-26T01:51:37.033Z
-Stopped at: Completed 01-prime-engine-core/01-03-PLAN.md
+Last session: 2026-03-26T03:29:51.633Z
+Stopped at: Completed 02-prime-modes-fsm/02-01-PLAN.md
 Resume file: None
