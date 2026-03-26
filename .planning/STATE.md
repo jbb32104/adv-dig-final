@@ -54,6 +54,7 @@ Progress: [░░░░░░░░░░] 0%
 *Updated after each plan completion*
 | Phase 01-prime-engine-core P02 | 6 | 2 tasks | 4 files |
 | Phase 01-prime-engine-core P03 | 2 | 2 tasks | 0 files |
+| Phase 02-prime-modes-fsm P01 | 126 | 2 tasks | 2 files |
 | Phase 02-prime-modes-fsm P03 | 47min | 1 tasks | 1 files |
 
 ## Accumulated Context
@@ -69,6 +70,9 @@ Recent decisions affecting current work:
 - [Phase 01-prime-engine-core]: Wire divider .divisor to next_d (comb) not d_ff (registered) to avoid one-cycle stale divisor when div_start fires
 - [Phase 01-prime-engine-core]: Use  golden list load guard (check golden[2]===1) to detect silently-zeroed memory on missing file
 - [Phase 01-prime-engine-core]: RTL audit plan 01-03: zero INFRA violations found -- divider.v and prime_engine.v were fully CSEE 4280 compliant from initial implementation
+- [Phase 02-prime-modes-fsm]: elapsed_timer uses plain integer comparison (tick_cnt_ff == TICK_PERIOD - 1) for iverilog compatibility
+- [Phase 02-prime-modes-fsm]: prime_accumulator last20 uses 20 individual output reg ports (Verilog-2001 forbids array port declarations)
+- [Phase 02-prime-modes-fsm]: fifo_count_ff is PTR_W+1 bits wide to unambiguously distinguish full (count==DEPTH) from empty (count==0)
 - [Phase 02-prime-modes-fsm]: write_prime task requires idle posedge before write to avoid iVerilog BRAM scheduling race with prime_data changes
 - [Phase 02-prime-modes-fsm]: read_prime task requires idle posedge after deassert to prevent rd_ptr skipping in iVerilog simulation
 
