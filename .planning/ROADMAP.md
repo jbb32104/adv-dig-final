@@ -12,7 +12,7 @@ Seven phases take the project from a verified prime-finding FSM through DDR2 int
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [x] **Phase 1: Prime Engine Core** - 6k±1 FSM verified in simulation; coding standards established (completed 2026-03-26)
+- [x] **Phase 1: Prime Engine Core** - 6k±1 FSM verified in simulation; coding standards established (completed 2026-03-26)
 - [ ] **Phase 2: Prime Modes FSM** - Mode 1/2/3 logic, elapsed time counter, digit-entry state machines (sim only)
 - [ ] **Phase 3: DDR2 Integration** - MIG IP instantiated, AXI4 arbiter, framebuffer + prime storage working
 - [ ] **Phase 4: VGA + Input Drivers** - Pixel clock, sync, framebuffer display controller, joystick driver, 7SD driver
@@ -49,13 +49,13 @@ Plans:
   3. Mode 3 simulation accepts a single candidate, drives the prime engine, and returns is_prime + elapsed cycles; display freezes on completion
   4. Running prime count increments live on each prime found; last-20 ring buffer holds the correct 20 values at termination
   5. Elapsed-time counter increments by 1 every 100 MHz cycle and freezes exactly when the mode FSM asserts done
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
-- [ ] 02-01: mode_fsm.v — top-level mode dispatcher (IDLE, MODE_SELECT, NUMBER_ENTRY, TIME_ENTRY, PRIME_RUN, PRIME_DONE, ISPRIME_ENTRY, ISPRIME_RUN, ISPRIME_DONE)
-- [ ] 02-02: elapsed_timer.v — 32-bit cycle counter with freeze; 1-second tick derived at 100 MHz
-- [ ] 02-03: prime_accumulator.v — prime count register, last-20 ring buffer, sequential DDR2-write interface stub
-- [ ] 02-04: mode_fsm_tb.v + accumulator_tb.v — self-checking sim for all three modes
+- [ ] 02-01-PLAN.md — elapsed_timer.v + prime_accumulator.v (supporting sub-modules: cycle/seconds counter with freeze, FIFO + count + ring buffer)
+- [ ] 02-02-PLAN.md — mode_fsm.v (9-state mode dispatcher: candidate enumeration, Mode 1/2/3 control, prime_engine handshake)
+- [ ] 02-03-PLAN.md — accumulator_tb.v (unit tests for prime_accumulator and elapsed_timer)
+- [ ] 02-04-PLAN.md — mode_fsm_tb.v (integration test: all three modes through full module stack)
 
 ### Phase 3: DDR2 Integration
 **Goal**: The MIG IP is instantiated and the AXI4 arbiter correctly services both framebuffer writes and prime storage writes without conflict, verified first in simulation then on hardware
@@ -210,4 +210,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 ---
 *Roadmap created: 2026-03-25*
-*Last updated: 2026-03-25 after initial creation*
+*Last updated: 2026-03-25 after Phase 2 planning*
