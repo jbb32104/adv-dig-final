@@ -12,7 +12,7 @@ Seven phases take the project from a verified prime-finding FSM through DDR2 int
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Prime Engine Core** - 6k±1 FSM verified in simulation; coding standards established
+- [x] **Phase 1: Prime Engine Core** - 6k±1 FSM verified in simulation; coding standards established (completed 2026-03-26)
 - [ ] **Phase 2: Prime Modes FSM** - Mode 1/2/3 logic, elapsed time counter, digit-entry state machines (sim only)
 - [ ] **Phase 3: DDR2 Integration** - MIG IP instantiated, AXI4 arbiter, framebuffer + prime storage working
 - [ ] **Phase 4: VGA + Input Drivers** - Pixel clock, sync, framebuffer display controller, joystick driver, 7SD driver
@@ -37,7 +37,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 - [x] 01-01: prime_engine.v — 6k±1 FSM (IDLE, CHECK_2_3, INIT_K, TEST_KM1, TEST_KP1, DONE states); synthesizable, no for loops
 - [x] 01-02: prime_engine_tb.v — self-checking testbench; sweeps 2–10007, cross-checks against golden list
-- [ ] 01-03: Coding-standard audit pass — verify _ff/_n naming, blocking/non-blocking split, default/else coverage across all Phase 1 files
+- [x] 01-03: Coding-standard audit pass — verify _ff/_n naming, blocking/non-blocking split, default/else coverage across all Phase 1 files
 
 ### Phase 2: Prime Modes FSM
 **Goal**: Modes 1, 2, and 3 are fully exercised in simulation — the mode FSM accepts a user-supplied N or T, runs the prime engine repeatedly, accumulates results, and terminates correctly
@@ -159,7 +159,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Prime Engine Core | 2/3 | In Progress|  |
+| 1. Prime Engine Core | 3/3 | Complete   | 2026-03-26 |
 | 2. Prime Modes FSM | 0/4 | Not started | - |
 | 3. DDR2 Integration | 0/4 | Not started | - |
 | 4. VGA + Input Drivers | 0/5 | Not started | - |
