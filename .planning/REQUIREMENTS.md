@@ -55,7 +55,7 @@
 - [x] **INFRA-05**: No `for` loops in any synthesis file
 - [x] **INFRA-06**: All combinational logic (including synchronous reset decode) in `always @(*)`; only `always @(posedge clk)` for flip-flops
 - [x] **INFRA-07**: `default:` in all `case` statements; final `else` in all `if-else` chains
-- [ ] **INFRA-08**: Self-checking Vivado testbench for every module; iVerilog behavioral testbenches for rapid iteration
+- [x] **INFRA-08**: Self-checking Vivado testbench for every module; iVerilog behavioral testbenches for rapid iteration
 
 ## v2 Requirements
 
@@ -114,7 +114,7 @@
 | INFRA-05 | Phase 1 | Complete |
 | INFRA-06 | Phase 1 | Complete |
 | INFRA-07 | Phase 1 | Complete |
-| INFRA-08 | Phase 1 | Pending |
+| INFRA-08 | Phase 1 | Complete |
 
 **Coverage:**
 - v1 requirements: 34 total
