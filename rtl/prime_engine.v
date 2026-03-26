@@ -70,7 +70,7 @@ module prime_engine #(
         .rst         (rst),
         .start       (div_start),      // combinational -- divider sees start on same cycle
         .dividend    (candidate_ff),
-        .divisor     (d_ff),
+        .divisor     (next_d),         // next_d: combinational, so divider latches updated d on same cycle as div_start
         .busy_ff     (div_busy),
         .done_ff     (div_done),
         .dbz_ff      (),               // unused: divisor is never 0 in our usage
