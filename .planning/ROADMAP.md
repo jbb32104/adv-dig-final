@@ -35,7 +35,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans
 
 Plans:
-- [ ] 01-01: prime_engine.v — 6k±1 FSM (IDLE, CHECK_2_3, INIT_K, TEST_KM1, TEST_KP1, DONE states); synthesizable, no for loops
+- [x] 01-01: prime_engine.v — 6k±1 FSM (IDLE, CHECK_2_3, INIT_K, TEST_KM1, TEST_KP1, DONE states); synthesizable, no for loops
 - [ ] 01-02: prime_engine_tb.v — self-checking testbench; sweeps 2–10007, cross-checks against golden list
 - [ ] 01-03: Coding-standard audit pass — verify _ff/_n naming, blocking/non-blocking split, default/else coverage across all Phase 1 files
 
@@ -159,7 +159,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Prime Engine Core | 0/3 | Not started | - |
+| 1. Prime Engine Core | 1/3 | In Progress|  |
 | 2. Prime Modes FSM | 0/4 | Not started | - |
 | 3. DDR2 Integration | 0/4 | Not started | - |
 | 4. VGA + Input Drivers | 0/5 | Not started | - |

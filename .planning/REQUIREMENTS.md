@@ -7,7 +7,7 @@
 
 ### Prime Engine
 
-- [ ] **PRIME-01**: 6k±1 trial division engine implemented as a synthesizable FSM (no for loops, no blocking/non-blocking mixing)
+- [x] **PRIME-01**: 6k±1 trial division engine implemented as a synthesizable FSM (no for loops, no blocking/non-blocking mixing)
 - [ ] **PRIME-02**: Mode 1 — find all primes ≤ N; N entered via joystick + 7SD (up to 8 decimal digits); store all found primes in DDR2
 - [ ] **PRIME-03**: Mode 2 — find all primes within T seconds; T entered via joystick + 7SD (1-second granularity, max 3600); store all found primes in DDR2
 - [ ] **PRIME-04**: Mode 3 — determine if entered number is prime; show elapsed time; freeze display on completion
@@ -50,11 +50,11 @@
 
 - [ ] **INFRA-01**: Top-level module instantiates all submodules in ANSI format; no logic at top level
 - [ ] **INFRA-02**: Top-level FSM states: IDLE, MODE_SELECT, NUMBER_ENTRY, TIME_ENTRY, PRIME_RUN, PRIME_DONE, ISPRIME_ENTRY, ISPRIME_RUN, ISPRIME_DONE, TEST_RUN, TEST_DONE
-- [ ] **INFRA-03**: All module flip-flops use `_ff` suffix; active-low signals use `_n` suffix
-- [ ] **INFRA-04**: Blocking (`=`) and non-blocking (`<=`) assignments in strictly separate `always` blocks
-- [ ] **INFRA-05**: No `for` loops in any synthesis file
-- [ ] **INFRA-06**: All combinational logic (including synchronous reset decode) in `always @(*)`; only `always @(posedge clk)` for flip-flops
-- [ ] **INFRA-07**: `default:` in all `case` statements; final `else` in all `if-else` chains
+- [x] **INFRA-03**: All module flip-flops use `_ff` suffix; active-low signals use `_n` suffix
+- [x] **INFRA-04**: Blocking (`=`) and non-blocking (`<=`) assignments in strictly separate `always` blocks
+- [x] **INFRA-05**: No `for` loops in any synthesis file
+- [x] **INFRA-06**: All combinational logic (including synchronous reset decode) in `always @(*)`; only `always @(posedge clk)` for flip-flops
+- [x] **INFRA-07**: `default:` in all `case` statements; final `else` in all `if-else` chains
 - [ ] **INFRA-08**: Self-checking Vivado testbench for every module; iVerilog behavioral testbenches for rapid iteration
 
 ## v2 Requirements
@@ -81,7 +81,7 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PRIME-01 | Phase 1 | Pending |
+| PRIME-01 | Phase 1 | Complete |
 | PRIME-02 | Phase 2 | Pending |
 | PRIME-03 | Phase 2 | Pending |
 | PRIME-04 | Phase 2 | Pending |
@@ -109,11 +109,11 @@
 | INPUT-04 | Phase 7 | Pending |
 | INFRA-01 | Phase 7 | Pending |
 | INFRA-02 | Phase 7 | Pending |
-| INFRA-03 | Phase 1 | Pending |
-| INFRA-04 | Phase 1 | Pending |
-| INFRA-05 | Phase 1 | Pending |
-| INFRA-06 | Phase 1 | Pending |
-| INFRA-07 | Phase 1 | Pending |
+| INFRA-03 | Phase 1 | Complete |
+| INFRA-04 | Phase 1 | Complete |
+| INFRA-05 | Phase 1 | Complete |
+| INFRA-06 | Phase 1 | Complete |
+| INFRA-07 | Phase 1 | Complete |
 | INFRA-08 | Phase 1 | Pending |
 
 **Coverage:**
