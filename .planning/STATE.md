@@ -55,6 +55,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01-prime-engine-core P02 | 6 | 2 tasks | 4 files |
 | Phase 01-prime-engine-core P03 | 2 | 2 tasks | 0 files |
 | Phase 02-prime-modes-fsm P01 | 126 | 2 tasks | 2 files |
+| Phase 02-prime-modes-fsm P02 | 2 | 1 tasks | 3 files |
 | Phase 02-prime-modes-fsm P03 | 47min | 1 tasks | 1 files |
 
 ## Accumulated Context
@@ -75,6 +76,7 @@ Recent decisions affecting current work:
 - [Phase 02-prime-modes-fsm]: fifo_count_ff is PTR_W+1 bits wide to unambiguously distinguish full (count==DEPTH) from empty (count==0)
 - [Phase 02-prime-modes-fsm]: write_prime task requires idle posedge before write to avoid iVerilog BRAM scheduling race with prime_data changes
 - [Phase 02-prime-modes-fsm]: read_prime task requires idle posedge after deassert to prevent rd_ptr skipping in iVerilog simulation
+- [Phase 02-prime-modes-fsm]: mode_fsm: step_toggle_ff=0 means +2, =1 means +4; init_phase_ff sequences 2→3→main-loop for 6k+/-1 candidate enumeration
 
 ### Pending Todos
 
