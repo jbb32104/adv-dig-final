@@ -5,7 +5,10 @@
 // Instantiates divider.v as u_div for multi-cycle remainder computation.
 
 module prime_engine #(
-    parameter WIDTH = 27
+    parameter WIDTH   = 27,
+    // d iterates up to sqrt(candidate_max) ≈ sqrt(2^27) ≈ 11586 → 14 bits sufficient.
+    // Set to 18 to match DSP48E1/E2 B-port width: A(25) × B(18) → P(48).
+    parameter D_WIDTH = 18
 ) (
     input  wire             clk,
     input  wire             rst,
@@ -27,26 +30,28 @@ module prime_engine #(
         DONE      = 3'd6;
 
     // Flip-flop registers (all _ff suffix per INFRA-03)
-    reg [2:0]       state_ff;
-    reg [WIDTH-1:0] candidate_ff;
-    reg [WIDTH-1:0] d_ff;
-    reg [WIDTH-1:0] k_ff;
+    reg [2:0]         state_ff;
+    reg [WIDTH-1:0]   candidate_ff;
+    reg [D_WIDTH-1:0] d_ff;         // narrowed: d ≤ sqrt(2^WIDTH) fits in D_WIDTH bits
+    reg [WIDTH-1:0]   k_ff;
 
     // Combinational next-state signals
-    reg [2:0]       next_state;
-    reg [WIDTH-1:0] next_candidate;
-    reg [WIDTH-1:0] next_d;
-    reg [WIDTH-1:0] next_k;
+    reg [2:0]         next_state;
+    reg [WIDTH-1:0]   next_candidate;
+    reg [D_WIDTH-1:0] next_d;
+    reg [WIDTH-1:0]   next_k;
     reg             next_is_prime_result;
     reg             next_done_out;
     reg             next_busy;
     reg             div_start;
 
-    // Bound check: d*d > candidate (strict >, uses DSP48 inference)
-    wire [2*WIDTH-1:0] d_squared;
-    assign d_squared = d_ff * d_ff;
+    // Bound check: d*d > candidate (strict >).
+    // DSP48E1/E2 inference: A-port (25 bits) × B-port (18 bits) → P (48 bits).
+    // d_ff is D_WIDTH (18) bits; zero-extend to 25 bits for A, leave as-is for B.
+    wire [47:0] d_squared;
+    assign d_squared = {{(25-D_WIDTH){1'b0}}, d_ff} * d_ff;  // 25×18 → 48-bit P
     wire bound_exceeded;
-    assign bound_exceeded = (d_squared > {{WIDTH{1'b0}}, candidate_ff});
+    assign bound_exceeded = (d_squared > {{(48-WIDTH){1'b0}}, candidate_ff});
 
     // Divider instance
     wire             div_done;
@@ -58,7 +63,7 @@ module prime_engine #(
         .rst         (rst),
         .start       (div_start),   // combinational: divider sees start on same cycle
         .dividend    (candidate_ff),
-        .divisor     (next_d),      // combinational next_d ensures correct divisor is latched with start
+        .divisor     ({{(WIDTH-D_WIDTH){1'b0}}, next_d}),  // zero-extend D_WIDTH → WIDTH for divider port
         .busy_ff     (div_busy),
         .done_ff     (div_done),
         .dbz_ff      (),            // unused: divisor is never 0 in our usage
@@ -85,7 +90,7 @@ module prime_engine #(
         if (rst) begin
             next_state           = IDLE;
             next_candidate       = {WIDTH{1'b0}};
-            next_d               = {WIDTH{1'b0}};
+            next_d               = {D_WIDTH{1'b0}};
             next_k               = {WIDTH{1'b0}};
             next_is_prime_result = 1'b0;
             next_done_out        = 1'b0;
@@ -121,7 +126,7 @@ module prime_engine #(
                         next_state           = DONE;
                     end else begin
                         // odd > 3: check divisibility by 3 via divider
-                        next_d     = {{WIDTH-2{1'b0}}, 2'd3};
+                        next_d     = {{D_WIDTH-2{1'b0}}, 2'd3};
                         div_start  = 1'b1;
                         next_state = WAIT_DIV3;
                     end
@@ -136,7 +141,7 @@ module prime_engine #(
                         end else begin
                             // not divisible by 3: begin 6k+/-1 loop
                             next_k     = {{WIDTH-1{1'b0}}, 1'b1};  // k = 1
-                            next_d     = {{WIDTH-3{1'b0}}, 3'd5};  // d = 6*1-1 = 5
+                            next_d     = {{D_WIDTH-3{1'b0}}, 3'd5};  // d = 6*1-1 = 5
                             next_state = INIT_K;
                         end
                     end else begin
@@ -163,7 +168,7 @@ module prime_engine #(
                             next_state           = DONE;
                         end else begin
                             // switch to 6k+1 = d+2
-                            next_d     = d_ff + {{WIDTH-2{1'b0}}, 2'd2};
+                            next_d     = d_ff + {{D_WIDTH-2{1'b0}}, 2'd2};
                             div_start  = 1'b1;
                             next_state = TEST_KP1;
                         end
@@ -180,7 +185,7 @@ module prime_engine #(
                         end else begin
                             // advance to next pair: k+1, d = 6(k+1)-1 = current 6k+1 + 4
                             next_k     = k_ff + {{WIDTH-1{1'b0}}, 1'b1};
-                            next_d     = d_ff + {{WIDTH-3{1'b0}}, 3'd4};
+                            next_d     = d_ff + {{D_WIDTH-3{1'b0}}, 3'd4};
                             next_state = INIT_K;
                         end
                     end else begin
