@@ -42,7 +42,7 @@ Self-checking unit test for `prime_accumulator.v` and `elapsed_timer.v`.
 
 **Compile**
 ```cmd
-iverilog -g2001 -o sim\accumulator_tb.vvp rtl\elapsed_timer.v rtl\prime_accumulator.v tb\accumulator_tb.v
+iverilog -g2001 -o sim\accumulator_tb.vvp rtl\prime_accumulator.v tb\accumulator_tb.v
 ```
 
 **Run**
@@ -58,7 +58,7 @@ Integration test for the full datapath: `mode_fsm` + `prime_engine` + `elapsed_t
 
 **Compile**
 ```cmd
-iverilog -g2001 -o sim\mode_fsm_tb.vvp rtl\divider.v rtl\prime_engine.v rtl\elapsed_timer.v rtl\prime_accumulator.v rtl\mode_fsm.v tb\mode_fsm_tb.v
+iverilog -g2001 -o sim\mode_fsm_tb.vvp rtl\divider.v rtl\prime_engine.v rtl\elapsed_timer.v rtl\prime_accumulator.v tb\prime_fifo_ip.v rtl\mode_fsm.v tb\mode_fsm_tb.v
 ```
 
 **Run**
@@ -75,8 +75,8 @@ if not exist sim mkdir sim
 python scripts\gen_golden_primes.py
 iverilog -g2001 -o sim\prime_engine_tb.vvp rtl\divider.v rtl\prime_engine.v tb\prime_engine_tb.v
 vvp sim\prime_engine_tb.vvp
-iverilog -g2001 -o sim\accumulator_tb.vvp rtl\elapsed_timer.v rtl\prime_accumulator.v tb\accumulator_tb.v
+iverilog -g2001 -o sim\accumulator_tb.vvp rtl\prime_accumulator.v tb\accumulator_tb.v
 vvp sim\accumulator_tb.vvp
-iverilog -g2001 -o sim\mode_fsm_tb.vvp rtl\divider.v rtl\prime_engine.v rtl\elapsed_timer.v rtl\prime_accumulator.v rtl\mode_fsm.v tb\mode_fsm_tb.v
+iverilog -g2001 -o sim\mode_fsm_tb.vvp rtl\divider.v rtl\prime_engine.v rtl\elapsed_timer.v rtl\prime_accumulator.v tb\prime_fifo_ip.v rtl\mode_fsm.v tb\mode_fsm_tb.v
 vvp sim\mode_fsm_tb.vvp
 ```
