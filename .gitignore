@@ -1,0 +1,52 @@
+# =============================================================================
+# Vivado project generated files — do NOT commit
+# =============================================================================
+
+# Build artifacts and run directories (synthesis, implementation, bitstreams)
+Final_Proj/Final_Proj.runs/
+Final_Proj/Final_Proj.cache/
+Final_Proj/Final_Proj.hw/
+Final_Proj/Final_Proj.sim/
+Final_Proj/Final_Proj.ip_user_files/
+Final_Proj/Final_Proj.gen/
+
+# Journal and log files
+*.jou
+*.log
+*.str
+
+# Backup files
+*.bak
+*.bk
+
+# Vivado waveform config
+*.wcfg
+
+# Vivado crash recovery
+.Xil/
+webtalk*.xml
+webtalk*.jou
+
+# =============================================================================
+# Keep — these should be committed
+# =============================================================================
+# Final_Proj/Final_Proj.xpr          — project file (source of truth)
+# Final_Proj/Final_Proj.srcs/        — IP (.xci) and constraint sources
+# rtl/                               — all RTL source files
+# tb/                                — all testbench files
+# scripts/                           — utility scripts
+# sim/                               — sim outputs (vvp, vcd) — see below
+
+# =============================================================================
+# Simulation outputs — optional, can be regenerated
+# =============================================================================
+sim/*.vvp
+sim/*.vcd
+
+# =============================================================================
+# OS / editor noise
+# =============================================================================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

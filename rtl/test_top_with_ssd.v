@@ -52,9 +52,11 @@ module test_top_with_ssd #(
     // Input interpretation
     // -----------------------------------------------------------------------
     wire [1:0]       mode_sel        = SW[1:0];
-    wire [WIDTH-1:0] n_limit         = {{WIDTH-14{1'b0}}, SW[15:2]};
-    wire [31:0]      t_limit         = {18'd0, SW[15:2]};
-    wire [WIDTH-1:0] check_candidate = {{WIDTH-14{1'b0}}, SW[15:2]};
+    // SW[15:2] (14 bits) mapped to the 14 MSBs of each value; lower 13 bits zero.
+    // SW[15]=bit26(MSB), SW[2]=bit13. Each switch-step = 8192 (2^13).
+    wire [WIDTH-1:0] n_limit         = {SW[15:2], {WIDTH-14{1'b0}}};
+    wire [31:0]      t_limit         = {18'd0, SW[15:2]};   // t_limit stays in seconds (small values)
+    wire [WIDTH-1:0] check_candidate = {SW[15:2], {WIDTH-14{1'b0}}};
 
     // -----------------------------------------------------------------------
     // Debounce buttons
