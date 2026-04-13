@@ -8,7 +8,7 @@ module divider #(
     parameter WIDTH = 27
 ) (
     input  wire             clk,
-    input  wire             rst,
+    input  wire             rst_n,
     input  wire             start,
     input  wire [WIDTH-1:0] dividend,
     input  wire [WIDTH-1:0] divisor,
@@ -61,7 +61,7 @@ module divider #(
         next_quo           = quo_ff;
         next_iter          = iter_ff;
 
-        if (rst) begin
+        if (!rst_n) begin
             next_busy          = 1'b0;
             next_done          = 1'b0;
             next_dbz           = 1'b0;

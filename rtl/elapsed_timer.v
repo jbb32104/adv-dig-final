@@ -9,7 +9,7 @@ module elapsed_timer #(
     parameter TICK_PERIOD = 100_000_000
 ) (
     input  wire        clk,
-    input  wire        rst,
+    input  wire        rst_n,
     input  wire        freeze,
     output reg  [31:0] cycle_count_ff,
     output reg  [31:0] seconds_ff,
@@ -39,7 +39,7 @@ module elapsed_timer #(
         next_seconds     = seconds_ff;
         next_second_tick = 1'b0;  // pulse default off
 
-        if (rst) begin
+        if (!rst_n) begin
             next_tick_cnt    = {TICK_BITS{1'b0}};
             next_cycle_count = 32'd0;
             next_seconds     = 32'd0;

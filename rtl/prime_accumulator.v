@@ -9,8 +9,8 @@
 // FIFO IP configuration (prime_fifo_ip):
 //   Interface      : Native
 //   Implementation : Independent clocks, Block RAM
-//   Write width    : 32 bits,  Write depth : 16384
-//   Read  width    : 32 bits,  Read  depth : 16384
+//   Write width    : 32 bits,   Write depth : 16384
+//   Read  width    : 128 bits,  Read  depth : 4096  (asymmetric)
 //   Output register: enabled (1-cycle read latency)
 //   Reset type     : Synchronous
 //
@@ -20,7 +20,7 @@
 module prime_accumulator (
     // Write-domain clock (logic clock, shared with prime_engine / mode_fsm)
     input  wire        clk,
-    input  wire        rst,
+    input  wire        rst_n,
     // Read-domain clock (MIG DDR2 ui_clk)
     input  wire        rd_clk,
     // Write interface: one pulse per engine done_ff
@@ -30,10 +30,11 @@ module prime_accumulator (
     input  wire        flush,           // pulse to flush partial shift register
     output reg         flush_done_ff,   // pulses one cycle after flush write completes
     // FIFO read interface (rd_clk domain — to DDR2 writer)
-    input  wire        prime_fifo_rd_en,
-    output wire [31:0] prime_fifo_rd_data,
-    output wire        prime_fifo_empty,
-    output wire        prime_fifo_full,
+    // Read side is 128 bits: four 32-bit bitmap words packed per MIG transaction
+    input  wire          prime_fifo_rd_en,
+    output wire [127:0]  prime_fifo_rd_data,
+    output wire          prime_fifo_empty,
+    output wire          prime_fifo_full,
     // Status (clk domain)
     output reg  [31:0] prime_count_ff   // running count of primes found
 );
@@ -53,16 +54,20 @@ module prime_accumulator (
     // -----------------------------------------------------------------------
     // FIFO IP instantiation
     // -----------------------------------------------------------------------
+    wire wr_rst_busy, rd_rst_busy;
+
     prime_fifo_ip u_fifo (
-        .wr_clk (clk),
-        .rd_clk (rd_clk),
-        .rst    (rst),
-        .din    (fifo_write_data),
-        .wr_en  (do_fifo_write),
-        .full   (prime_fifo_full),
-        .dout   (prime_fifo_rd_data),
-        .rd_en  (prime_fifo_rd_en),
-        .empty  (prime_fifo_empty)
+        .wr_clk     (clk),
+        .rd_clk     (rd_clk),
+        .rst        (~rst_n),
+        .din        (fifo_write_data),       // 32-bit write side
+        .wr_en      (do_fifo_write & ~wr_rst_busy),
+        .full       (prime_fifo_full),
+        .dout       (prime_fifo_rd_data),    // 128-bit read side
+        .rd_en      (prime_fifo_rd_en & ~rd_rst_busy),
+        .empty      (prime_fifo_empty),
+        .wr_rst_busy(wr_rst_busy),
+        .rd_rst_busy(rd_rst_busy)
     );
 
     // -----------------------------------------------------------------------
@@ -81,7 +86,7 @@ module prime_accumulator (
         do_fifo_write    = 1'b0;
         fifo_write_data  = 32'd0;
 
-        if (rst) begin
+        if (!rst_n) begin
             next_shift_reg   = 32'd0;
             next_bit_count   = 5'd0;
             next_prime_count = 32'd0;

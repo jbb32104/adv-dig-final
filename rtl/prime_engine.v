@@ -11,7 +11,7 @@ module prime_engine #(
     parameter D_WIDTH = 18
 ) (
     input  wire             clk,
-    input  wire             rst,
+    input  wire             rst_n,
     input  wire             start,
     input  wire [WIDTH-1:0] candidate,
     output reg              done_ff,
@@ -60,7 +60,7 @@ module prime_engine #(
 
     divider #(.WIDTH(WIDTH)) u_div (
         .clk         (clk),
-        .rst         (rst),
+        .rst_n       (rst_n),
         .start       (div_start),   // combinational: divider sees start on same cycle
         .dividend    (candidate_ff),
         .divisor     ({{(WIDTH-D_WIDTH){1'b0}}, next_d}),  // zero-extend D_WIDTH → WIDTH for divider port
@@ -87,7 +87,7 @@ module prime_engine #(
         next_busy            = 1'b0;
         div_start            = 1'b0;
 
-        if (rst) begin
+        if (!rst_n) begin
             next_state           = IDLE;
             next_candidate       = {WIDTH{1'b0}};
             next_d               = {D_WIDTH{1'b0}};
