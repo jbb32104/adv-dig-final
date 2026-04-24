@@ -26,10 +26,17 @@ Add VGA text display to the existing prime engine project on Nexys A7. The VGA o
 
 | # | Module | Dependencies | Description |
 |---|--------|-------------|-------------|
-| 1 | `vga_reader.v` | pixel_fifo, expanded arbiter | Prefetch text line pixels from DDR2 into pixel_fifo |
-| 2 | `frame_renderer.v` | font_rom, screen_text_rom, expanded arbiter | Render text→pixels, write to DDR2 |
-| 3 | `mem_arbiter.v` expansion | Existing arbiter | Add VGA read + renderer write ports, priority logic |
-| 4 | Integration | All above | Wire into `test_top_logic.v` and `test_top_with_ssd.v` |
+| 1 | `vga_reader.v` | pixel_fifo, arbiter | Prefetch text line pixels from DDR2 into pixel_fifo |
+| 2 | `frame_renderer.v` | font_rom, screen_text_rom, arbiter | Render text→pixels, write to DDR2 |
+| 3 | Integration | All above | Wire into `test_top_logic.v` and `test_top_with_ssd.v` |
+
+### Recently Completed
+
+| Module | Status |
+|--------|--------|
+| `mem_arbiter.v` expansion | Done — 4-port priority arbiter with read support, VGA/renderer ports stubbed in test_top_logic.v |
+| Prime address regions | Enlarged to 2.5 MB each (20M+ bits) for 100M candidate range |
+| `app_rd_data` wiring | Connected from ddr2_wrapper through arbiter |
 
 ---
 
@@ -37,7 +44,7 @@ Add VGA text display to the existing prime engine project on Nexys A7. The VGA o
 
 - **Prime engines**: Two independent engines (6k+1, 6k-1) generate prime bitmaps
 - **Prime accumulators**: Bit-pack results into 32-bit words, write to asymmetric FIFOs (32-bit write / 128-bit read), flush with mod-4 zero-padding
-- **mem_arbiter**: Writes prime bitmap data from two FIFOs to DDR2 (write-only, round-robin, 3-state FSM: IDLE → ISSUE → COOLDOWN)
+- **mem_arbiter**: 4-port priority arbiter (VGA read > renderer write > prime round-robin), supports both CMD_READ and CMD_WRITE, 3-state FSM: IDLE → ISSUE → COOLDOWN
 - **DDR2 via MIG**: 128-bit native interface, ~75 MHz ui_clk, calibration handshake
 - **PLL**: 100 MHz board clock → 200 MHz (MIG sys_clk), 25 MHz (clk_vga), 50 MHz (SD clock)
 - **Clock domains**: clk (100 MHz), ui_clk (~75 MHz), sys_clk_200 (200 MHz), clk_vga (25 MHz)
@@ -102,11 +109,14 @@ All text is horizontally centered within a 20-character slot (padding with blank
 ## DDR2 Address Map
 
 ```
-0x000_0000 – 0x01F_FFFF : Prime bitmap 6k+1        (existing, 2 MB)
-0x020_0000 – 0x03F_FFFF : Prime bitmap 6k-1        (existing, 2 MB)
-0x040_0000 – 0x049_FFF  : Frame buffer A            (40,960 bytes)
-0x050_0000 – 0x059_FFF  : Frame buffer B            (40,960 bytes)
+0x000_0000 – 0x027_FFFF : Prime bitmap 6k+1        (2.5 MB = 20,971,520 bits)
+0x028_0000 – 0x04F_FFFF : Prime bitmap 6k-1        (2.5 MB = 20,971,520 bits)
+0x050_0000 – 0x050_9FFF : Frame buffer A            (40,960 bytes)
+0x060_0000 – 0x060_9FFF : Frame buffer B            (40,960 bytes)
 ```
+
+Prime storage sized for 100M candidate range: only 6k±1 values tested,
+so ~33.3M candidates → 20M bits per stream covers it with margin.
 
 Each frame buffer stores only the text line scanlines:
 - Line 0: 32 rows × 640 bytes = 20,480 bytes (2x height)
@@ -167,25 +177,19 @@ Renders text characters to pixel data and writes to DDR2.
 - **Screen text ROM access**: Same — 1-cycle latency, pipeline accordingly.
 - **Scanline buffer**: Build each 640-byte scanline in a local register array or BRAM, then burst-write to DDR2 in 40 × 128-bit transactions.
 
-### 3. mem_arbiter.v (Expanded — ui_clk domain)
+### 3. mem_arbiter.v (Implemented)
 
-Currently: 2-port write-only (prime plus, prime minus), 3-state FSM.
-Expanded to: 4-port with reads.
+4-port priority arbiter with read + write support.
 
 - **Requestors (priority order)**:
-  1. **VGA read** (highest) — cannot miss pixels or VGA output tears
-  2. **Frame renderer write** (medium) — only active during screen transitions
-  3. **Prime plus write** (lower, round-robin with minus)
-  4. **Prime minus write** (lower, round-robin with plus)
-- **New capabilities**:
-  - Issue CMD_READ (3'b001) in addition to CMD_WRITE (3'b000)
-  - Route app_rd_data + app_rd_data_valid back to vga_reader (only read requestor)
-  - Priority-based selection in S_IDLE instead of simple round-robin
-- **Existing behavior preserved**: Prime FIFO writes work exactly as before when no VGA activity
-- **MIG read interface** (currently unconnected in test_top_logic.v):
-  - `app_rd_data[127:0]` — read data from DDR2
-  - `app_rd_data_valid` — read data is valid this cycle
-  - `app_rd_data_end` — last beat of read burst (single-beat for BL8, same as valid)
+  1. **VGA read** (highest) — `vga_rd_req` / `vga_rd_addr` → `vga_rd_grant_ff`
+  2. **Frame renderer write** (medium) — `render_wr_req` / `render_wr_addr` / `render_wr_data` → `render_wr_grant_ff`
+  3. **Prime plus write** (lower, round-robin with minus) — FIFO auto-address
+  4. **Prime minus write** (lower, round-robin with plus) — FIFO auto-address
+- **Read data passthrough**: `rd_data` / `rd_data_valid` wired directly from MIG to VGA reader (only read requestor)
+- **Read commands**: For reads, `data_sent` is pre-set to 1 in IDLE (no write data phase); completion requires only command acceptance
+- **Address constants**: `BASE_PLUS = 0x000_0000`, `BASE_MINUS = 0x028_0000`
+- **Existing prime behavior preserved**: identical write path when VGA/renderer ports are idle
 
 ### 4. Integration in test_top_logic.v and test_top_with_ssd.v
 

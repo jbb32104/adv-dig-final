@@ -147,6 +147,9 @@ module test_top_logic #(
     wire         arb_app_wdf_wren;
     wire         arb_app_rdy;
     wire         arb_app_wdf_rdy;
+    wire [127:0] arb_app_rd_data;
+    wire         arb_app_rd_data_valid;
+    wire         arb_app_rd_data_end;
 
     ddr2_wrapper u_ddr2 (
         .ddr2_dq             (ddr2_dq),
@@ -171,9 +174,9 @@ module test_top_logic #(
         .app_wdf_end         (arb_app_wdf_end),
         .app_wdf_mask        (arb_app_wdf_mask),
         .app_wdf_wren        (arb_app_wdf_wren),
-        .app_rd_data         (),
-        .app_rd_data_end     (),
-        .app_rd_data_valid   (),
+        .app_rd_data         (arb_app_rd_data),
+        .app_rd_data_end     (arb_app_rd_data_end),
+        .app_rd_data_valid   (arb_app_rd_data_valid),
         .app_rdy             (arb_app_rdy),
         .app_wdf_rdy         (arb_app_wdf_rdy),
         .app_sr_req          (1'b0),
@@ -362,20 +365,39 @@ module test_top_logic #(
 
     // =======================================================================
     // mem_arbiter (ui_clk domain)
+    // VGA read and renderer write ports stubbed for now — will be connected
+    // when vga_reader and frame_renderer are implemented.
     // =======================================================================
+    wire [127:0] arb_rd_data;
+    wire         arb_rd_data_valid;
+
     mem_arbiter u_arb (
         .ui_clk               (ui_clk),
         .rst_n                (arb_rst_n),
         .init_calib_complete  (init_calib_complete),
 
+        // Port 0: VGA read (stubbed — no requestor yet)
+        .vga_rd_req           (1'b0),
+        .vga_rd_addr          (27'd0),
+        .vga_rd_grant_ff      (),
+
+        // Port 1: Frame renderer write (stubbed — no requestor yet)
+        .render_wr_req        (1'b0),
+        .render_wr_addr       (27'd0),
+        .render_wr_data       (128'd0),
+        .render_wr_grant_ff   (),
+
+        // Port 2: Prime plus write
         .prime_plus_rd_data   (acc_plus_rd_data),
         .prime_plus_empty     (acc_plus_fifo_empty),
         .prime_plus_rd_en_ff  (arb_rd_en_plus),
 
+        // Port 3: Prime minus write
         .prime_minus_rd_data  (acc_minus_rd_data),
         .prime_minus_empty    (acc_minus_fifo_empty),
         .prime_minus_rd_en_ff (arb_rd_en_minus),
 
+        // MIG interface
         .app_addr_ff          (arb_app_addr),
         .app_cmd_ff           (arb_app_cmd),
         .app_en_ff            (arb_app_en),
@@ -384,7 +406,14 @@ module test_top_logic #(
         .app_wdf_mask_ff      (arb_app_wdf_mask),
         .app_wdf_wren_ff      (arb_app_wdf_wren),
         .app_rdy              (arb_app_rdy),
-        .app_wdf_rdy          (arb_app_wdf_rdy)
+        .app_wdf_rdy          (arb_app_wdf_rdy),
+
+        // MIG read data passthrough
+        .app_rd_data          (arb_app_rd_data),
+        .app_rd_data_valid    (arb_app_rd_data_valid),
+        .app_rd_data_end      (arb_app_rd_data_end),
+        .rd_data              (arb_rd_data),
+        .rd_data_valid        (arb_rd_data_valid)
     );
 
     // =======================================================================
