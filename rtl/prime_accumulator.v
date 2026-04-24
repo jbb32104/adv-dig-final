@@ -4,13 +4,15 @@
 // Accepts one bit per completed candidate test (prime_valid + is_prime).
 // Packs 32 bits into a word (LSB = first candidate received), then writes
 // that word to the Vivado FIFO IP (prime_fifo_ip) for DDR2 transfer.
-// flush zero-pads the current partial word and writes it at mode end.
+// flush zero-pads the current partial word and writes it at mode end,
+// then pads with zero words until the 32-bit write count is a multiple
+// of 4 so the 128-bit read side always has a complete word to deliver.
 //
 // FIFO IP configuration (prime_fifo_ip):
 //   Interface      : Native
 //   Implementation : Independent clocks, Block RAM
-//   Write width    : 32 bits,  Write depth : 16384
-//   Read  width    : 32 bits,  Read  depth : 16384
+//   Write width    : 32 bits,   Write depth : 16384
+//   Read  width    : 128 bits,  Read  depth : 4096  (asymmetric)
 //   Output register: enabled (1-cycle read latency)
 //   Reset type     : Synchronous
 //
@@ -20,7 +22,7 @@
 module prime_accumulator (
     // Write-domain clock (logic clock, shared with prime_engine / mode_fsm)
     input  wire        clk,
-    input  wire        rst,
+    input  wire        rst_n,
     // Read-domain clock (MIG DDR2 ui_clk)
     input  wire        rd_clk,
     // Write interface: one pulse per engine done_ff
@@ -30,10 +32,11 @@ module prime_accumulator (
     input  wire        flush,           // pulse to flush partial shift register
     output reg         flush_done_ff,   // pulses one cycle after flush write completes
     // FIFO read interface (rd_clk domain — to DDR2 writer)
-    input  wire        prime_fifo_rd_en,
-    output wire [31:0] prime_fifo_rd_data,
-    output wire        prime_fifo_empty,
-    output wire        prime_fifo_full,
+    // Read side is 128 bits: four 32-bit bitmap words packed per MIG transaction
+    input  wire          prime_fifo_rd_en,
+    output wire [127:0]  prime_fifo_rd_data,
+    output wire          prime_fifo_empty,
+    output wire          prime_fifo_full,
     // Status (clk domain)
     output reg  [31:0] prime_count_ff   // running count of primes found
 );
@@ -43,6 +46,8 @@ module prime_accumulator (
     // -----------------------------------------------------------------------
     reg [31:0] shift_reg_ff;
     reg [4:0]  bit_count_ff;    // 0..31: position of next incoming bit
+    reg [1:0]  wr_mod4_ff;      // FIFO writes mod 4 (0 = aligned for 128-bit read)
+    reg        flushing_ff;     // 1 while padding zeros to align wr_mod4
 
     // -----------------------------------------------------------------------
     // FIFO IP write controls (combinational)
@@ -53,16 +58,20 @@ module prime_accumulator (
     // -----------------------------------------------------------------------
     // FIFO IP instantiation
     // -----------------------------------------------------------------------
+    wire wr_rst_busy, rd_rst_busy;
+
     prime_fifo_ip u_fifo (
-        .wr_clk (clk),
-        .rd_clk (rd_clk),
-        .rst    (rst),
-        .din    (fifo_write_data),
-        .wr_en  (do_fifo_write),
-        .full   (prime_fifo_full),
-        .dout   (prime_fifo_rd_data),
-        .rd_en  (prime_fifo_rd_en),
-        .empty  (prime_fifo_empty)
+        .wr_clk     (clk),
+        .rd_clk     (rd_clk),
+        .rst        (~rst_n),
+        .din        (fifo_write_data),       // 32-bit write side
+        .wr_en      (do_fifo_write & ~wr_rst_busy),
+        .full       (prime_fifo_full),
+        .dout       (prime_fifo_rd_data),    // 128-bit read side
+        .rd_en      (prime_fifo_rd_en & ~rd_rst_busy),
+        .empty      (prime_fifo_empty),
+        .wr_rst_busy(wr_rst_busy),
+        .rd_rst_busy(rd_rst_busy)
     );
 
     // -----------------------------------------------------------------------
@@ -72,24 +81,30 @@ module prime_accumulator (
     reg [4:0]  next_bit_count;
     reg [31:0] next_prime_count;
     reg        next_flush_done;
+    reg [1:0]  next_wr_mod4;
+    reg        next_flushing;
 
     always @(*) begin
         next_shift_reg   = shift_reg_ff;
         next_bit_count   = bit_count_ff;
         next_prime_count = prime_count_ff;
         next_flush_done  = 1'b0;
+        next_wr_mod4     = wr_mod4_ff;
+        next_flushing    = flushing_ff;
         do_fifo_write    = 1'b0;
         fifo_write_data  = 32'd0;
 
-        if (rst) begin
+        if (!rst_n) begin
             next_shift_reg   = 32'd0;
             next_bit_count   = 5'd0;
             next_prime_count = 32'd0;
+            next_wr_mod4     = 2'd0;
+            next_flushing    = 1'b0;
         end else begin
 
             // --- Bit packing ---
-            // flush takes priority if both arrive simultaneously (not expected in practice)
-            if (prime_valid && !flush) begin
+            // Blocked during flush and the subsequent padding phase.
+            if (prime_valid && !flush && !flushing_ff) begin
                 next_shift_reg = shift_reg_ff | ({31'b0, is_prime} << bit_count_ff);
 
                 if (is_prime)
@@ -107,16 +122,33 @@ module prime_accumulator (
                 end
             end
 
-            // --- Flush: zero-pad partial word and write ---
-            if (flush) begin
+            // --- Flush entry: write partial word and begin padding phase ---
+            if (flush && !flushing_ff) begin
                 if (bit_count_ff != 5'd0) begin
                     fifo_write_data = shift_reg_ff;
                     do_fifo_write   = !prime_fifo_full;
                     next_shift_reg  = 32'd0;
                     next_bit_count  = 5'd0;
                 end
-                next_flush_done = 1'b1;     // pulse regardless — mode_fsm waits on this
+                next_flushing = 1'b1;
             end
+
+            // --- Flush padding: write zero words until wr_mod4 == 0 ---
+            // Ensures the 128-bit read side always has a complete word.
+            if (flushing_ff) begin
+                if (wr_mod4_ff == 2'd0) begin
+                    // Aligned — done
+                    next_flushing   = 1'b0;
+                    next_flush_done = 1'b1;
+                end else begin
+                    fifo_write_data = 32'd0;
+                    do_fifo_write   = !prime_fifo_full;
+                end
+            end
+
+            // --- Track FIFO writes mod 4 ---
+            if (do_fifo_write)
+                next_wr_mod4 = wr_mod4_ff + 2'd1;
         end
     end
 
@@ -128,6 +160,8 @@ module prime_accumulator (
         bit_count_ff   <= next_bit_count;
         prime_count_ff <= next_prime_count;
         flush_done_ff  <= next_flush_done;
+        wr_mod4_ff     <= next_wr_mod4;
+        flushing_ff    <= next_flushing;
     end
 
 endmodule

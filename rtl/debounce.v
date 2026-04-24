@@ -13,7 +13,7 @@ module debounce #(
     parameter DEBOUNCE_CYCLES = 500_000
 ) (
     input  wire clk,
-    input  wire rst,
+    input  wire rst_n,
     input  wire btn_in,
     output reg  btn_state_ff,
     output reg  rising_pulse_ff,
@@ -56,7 +56,7 @@ module debounce #(
         next_rising_pulse  = 1'b0;
         next_falling_pulse = 1'b0;
 
-        if (rst) begin
+        if (!rst_n) begin
             next_sync0         = 1'b0;
             next_sync1         = 1'b0;
             next_ctr           = {CTR_W{1'b0}};

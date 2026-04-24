@@ -22,7 +22,7 @@ module mode_fsm #(
     parameter WIDTH = 27
 ) (
     input  wire             clk,
-    input  wire             rst,
+    input  wire             rst_n,
     // User interface
     input  wire [1:0]       mode_sel,
     input  wire [WIDTH-1:0] n_limit,
@@ -164,7 +164,7 @@ module mode_fsm #(
         next_acc_plus_flush    = 1'b0;
         next_acc_minus_flush   = 1'b0;
 
-        if (rst) begin
+        if (!rst_n) begin
             next_state               = IDLE;
             next_mode_sel            = 2'b00;
             next_n_limit             = {WIDTH{1'b0}};

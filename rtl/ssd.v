@@ -17,7 +17,7 @@ module ssd #(
     parameter REFRESH_RATE = 500            // Hz per digit
 ) (
     input  wire        clk,
-    input  wire        rst,
+    input  wire        rst_n,
     input  wire [31:0] value,               // 32-bit hex value to display
     input  wire [7:0]  dp_en,               // decimal point enable per digit
     output reg  [6:0]  SEG,                 // segment outputs (active-low)
@@ -41,7 +41,7 @@ module ssd #(
         next_refresh_ctr = refresh_ctr_ff;
         next_digit_idx   = digit_idx_ff;
 
-        if (rst) begin
+        if (!rst_n) begin
             next_refresh_ctr = {CTR_W{1'b0}};
             next_digit_idx   = 3'd0;
         end else begin
@@ -137,10 +137,10 @@ module ssd #(
     reg       next_dp_n;
 
     always @(*) begin
-        if (rst) begin
-            next_seg  = 7'h7F;  // all segments off (active-low: all 1s)
-            next_an   = 8'hFF;  // all anodes off
-            next_dp_n = 1'b1;   // decimal point off
+        if (!rst_n) begin
+            next_seg  = 7'h7F;
+            next_an   = 8'hFF;
+            next_dp_n = 1'b1;
         end else begin
             next_seg  = ~seg_active_high;
             next_an   = an_active_low;
