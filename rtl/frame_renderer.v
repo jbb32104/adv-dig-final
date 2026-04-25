@@ -118,8 +118,10 @@ module frame_renderer #(
     wire is_line0 = (line_idx_ff == 2'd0);
 
     // Text region for current word
+    // On screen 0 line 0 is rendered as a bouncing sprite by vga_driver,
+    // so the framebuffer writes all-background there (no static text).
     wire is_text = is_line0
-        ? (word_idx_ff >= 6'd10 && word_idx_ff < 6'd30)
+        ? (render_sid_ff != 3'd0 && word_idx_ff >= 6'd10 && word_idx_ff < 6'd30)
         : (word_idx_ff >= 6'd15 && word_idx_ff < 6'd25);
 
     // Character position within the 20-char string

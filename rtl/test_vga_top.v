@@ -143,6 +143,16 @@ module test_vga_top #(
     wire vga_rst = vga_rst_sync;
 
     // =======================================================================
+    // screen_id CDC (clk -> clk_vga): 2-FF synchronizer, slow-changing
+    // =======================================================================
+    reg [2:0] sid_vga_meta, sid_vga_sync;
+    always @(posedge clk_vga) begin
+        sid_vga_meta <= screen_id_ff;
+        sid_vga_sync <= sid_vga_meta;
+    end
+    wire sprite_enable = (sid_vga_sync == 3'd0);
+
+    // =======================================================================
     // DDR2 wrapper (MIG)
     // =======================================================================
     wire         ui_clk;
@@ -539,6 +549,22 @@ module test_vga_top #(
     );
 
     // =======================================================================
+    // Sprite Animator (clk_vga domain) — bouncing "PRIME FINDER" on screen 0
+    // =======================================================================
+    wire [9:0] sprite_x, sprite_y;
+    wire [7:0] sprite_color;
+
+    sprite_animator u_sprite_anim (
+        .clk_vga        (clk_vga),
+        .rst            (vga_rst),
+        .vsync          (vsync),
+        .enable         (sprite_enable),
+        .sprite_x_ff    (sprite_x),
+        .sprite_y_ff    (sprite_y),
+        .sprite_color_ff(sprite_color)
+    );
+
+    // =======================================================================
     // VGA Driver (clk_vga domain)
     // =======================================================================
     vga_driver u_vga_drv (
@@ -552,6 +578,10 @@ module test_vga_top #(
         .fifo_dout    (fifo_dout),
         .fifo_empty   (fifo_empty),
         .fifo_rd_en   (fifo_rd_en),
+        .sprite_en    (sprite_enable),
+        .sprite_x     (sprite_x),
+        .sprite_y     (sprite_y),
+        .sprite_color (sprite_color),
         .vga_r_ff     (VGA_R),
         .vga_g_ff     (VGA_G),
         .vga_b_ff     (VGA_B),
