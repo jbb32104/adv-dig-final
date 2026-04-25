@@ -500,6 +500,29 @@ module test_vga_top #(
     );
 
     // =======================================================================
+    // Stopwatch BCD — counts up in ten-thousandths of a second for SSD
+    // Uses same restart/freeze as elapsed_timer.
+    // =======================================================================
+    wire [31:0] sw_bcd;
+
+    stopwatch_bcd #(.PRESCALE(10_000)) u_stopwatch (
+        .clk    (clk),
+        .rst_n  (rst_sync_n),
+        .restart(timer_restart),
+        .freeze (timer_freeze),
+        .bcd_ff (sw_bcd)
+    );
+
+    // Latch mode_sel on go pulse — holds the active mode for SSD display logic
+    reg [1:0] latched_mode_ff;
+    always @(posedge clk) begin
+        if (~rst_sync_n)
+            latched_mode_ff <= 2'd0;
+        else if (nav_go)
+            latched_mode_ff <= nav_mode_sel;
+    end
+
+    // =======================================================================
     // Frame renderer (ui_clk domain)
     // Renders text from screen_text_rom via font_rom into DDR2 frame buffer.
     // Writes to the back buffer (~fb_display_ff).
@@ -765,7 +788,10 @@ module test_vga_top #(
     );
 
     // =======================================================================
-    // SSD display (clk domain) — same pages as test_top_logic
+    // SSD display (clk domain)
+    // During n-max (mode 1) and single (mode 3) on loading/results screens:
+    //   show stopwatch as SSSS.FFFF (seconds . ten-thousandths)
+    // Otherwise: debug pages cycled by BTNR
     // =======================================================================
     reg [1:0] ssd_page_ff;
     always @(posedge clk) begin
@@ -773,17 +799,28 @@ module test_vga_top #(
         else if (btnr_pulse) ssd_page_ff <= ssd_page_ff + 2'd1;
     end
 
-    reg [31:0] ssd_value;
-    always @(*) begin
-        case (ssd_page_ff)
-            2'd0: ssd_value = wr_count_plus_ff;
-            2'd1: ssd_value = wr_count_minus_ff;
-            2'd2: ssd_value = prime_count_plus;
-            2'd3: ssd_value = prime_count_minus;
-        endcase
-    end
+    // Stopwatch display condition: loading (5) or results (6) in mode 1 or 3
+    wire ssd_show_stopwatch = (screen_id_ff == 3'd5 || screen_id_ff == 3'd6) &&
+                              (latched_mode_ff == 2'd1 || latched_mode_ff == 2'd3);
 
-    wire [7:0] ssd_dp_en = 8'h10 << ssd_page_ff;
+    reg [31:0] ssd_value;
+    reg [7:0]  ssd_dp_en;
+    always @(*) begin
+        ssd_value = 32'd0;
+        ssd_dp_en = 8'h10;
+        if (ssd_show_stopwatch) begin
+            ssd_value = sw_bcd;
+            ssd_dp_en = 8'h10;  // decimal point on digit 4: SSSS.FFFF
+        end else begin
+            case (ssd_page_ff)
+                2'd0: ssd_value = wr_count_plus_ff;
+                2'd1: ssd_value = wr_count_minus_ff;
+                2'd2: ssd_value = prime_count_plus;
+                default: ssd_value = prime_count_minus;
+            endcase
+            ssd_dp_en = 8'h10 << ssd_page_ff;
+        end
+    end
 
     ssd #(
         .CLK_FREQ_HZ (100_000_000),
