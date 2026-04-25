@@ -53,8 +53,8 @@ module vga_reader #(
     input  wire         rd_data_valid,
 
     // pixel_fifo write port (ui_clk domain)
-    output wire [127:0] fifo_din,
-    output wire         fifo_wr_en,
+    output reg  [127:0] fifo_din,
+    output reg          fifo_wr_en,
     input  wire         fifo_full,
     input  wire         fifo_wr_rst_busy
 );
@@ -64,98 +64,129 @@ module vga_reader #(
         (LINE0_HEIGHT + LINE12_HEIGHT + LINE12_HEIGHT) * WORDS_PER_SCANLINE;
 
     // -----------------------------------------------------------------------
-    // vsync CDC (clk_vga -> ui_clk): 2-FF synchronizer + edge detect
+    // Registered state
     // -----------------------------------------------------------------------
-    reg vs_meta_ff, vs_sync_ff, vs_prev_ff;
-    always @(posedge ui_clk) begin
-        vs_meta_ff <= vsync_vga;
-        vs_sync_ff <= vs_meta_ff;
-        vs_prev_ff <= vs_sync_ff;
-    end
-    // Rising edge of vsync = entering vertical blanking = frame done.
-    // We use this to reset the read pointer for the next frame.
-    wire vs_rising = vs_sync_ff && !vs_prev_ff;
-
-    // -----------------------------------------------------------------------
-    // Latch fb_select on vsync so the buffer base is stable for the frame
-    // -----------------------------------------------------------------------
+    reg        vs_meta_ff, vs_sync_ff, vs_prev_ff;
     reg        fb_sel_latched_ff;
-    wire [26:0] frame_base = fb_sel_latched_ff ? FB_B : FB_A;
+    reg [1:0]  state_ff;
+    reg [12:0] word_cnt_ff;
+    reg [26:0] rd_addr_ff;
 
     // -----------------------------------------------------------------------
-    // FSM
+    // FSM states
     // -----------------------------------------------------------------------
     localparam [1:0] S_WAIT_VS = 2'd0,   // wait for vsync to reset pointer
                      S_IDLE    = 2'd1,   // wait for FIFO room
                      S_REQ     = 2'd2,   // read request in flight
                      S_DATA    = 2'd3;   // wait for rd_data_valid
 
-    reg [1:0]  state_ff;
-    reg [12:0] word_cnt_ff;   // words read this frame (0..WORDS_PER_FRAME-1)
-    reg [26:0] rd_addr_ff;    // next DDR2 byte address to read
-
-    // Read data from arbiter goes straight into pixel_fifo
-    assign fifo_din   = rd_data;
-    assign fifo_wr_en = rd_data_valid && !fifo_wr_rst_busy;
+    // -----------------------------------------------------------------------
+    // Combinational next-state signals
+    // -----------------------------------------------------------------------
+    reg        vs_meta_next, vs_sync_next, vs_prev_next;
+    reg        vs_rising;
+    reg        fb_sel_latched_next;
+    reg [1:0]  state_next;
+    reg [12:0] word_cnt_next;
+    reg [26:0] rd_addr_next;
+    reg        vga_rd_req_next;
+    reg [26:0] vga_rd_addr_next;
+    // -----------------------------------------------------------------------
+    // FIFO write port — combinational pass-through (zero latency)
+    // -----------------------------------------------------------------------
+    always @(*) begin
+        fifo_din   = rd_data;
+        fifo_wr_en = rd_data_valid && !fifo_wr_rst_busy;
+    end
 
     // -----------------------------------------------------------------------
-    // Sequential logic
+    // vsync CDC + combinational next-state logic (including reset)
     // -----------------------------------------------------------------------
-    always @(posedge ui_clk) begin
+    always @(*) begin
+        // CDC chain (always runs, no reset gate)
+        vs_meta_next = vsync_vga;
+        vs_sync_next = vs_meta_ff;
+        vs_prev_next = vs_sync_ff;
+
+        // Rising edge of vsync
+        vs_rising = vs_sync_ff && !vs_prev_ff;
+
         if (!rst_n) begin
-            state_ff          <= S_WAIT_VS;
-            word_cnt_ff       <= 13'd0;
-            rd_addr_ff        <= FB_A;
-            vga_rd_req_ff     <= 1'b0;
-            vga_rd_addr_ff    <= FB_A;
-            fb_sel_latched_ff <= 1'b0;
+            state_next          = S_WAIT_VS;
+            word_cnt_next       = 13'd0;
+            rd_addr_next        = FB_A;
+            vga_rd_req_next     = 1'b0;
+            vga_rd_addr_next    = FB_A;
+            fb_sel_latched_next = 1'b0;
         end else begin
+            // Default: hold all registers
+            state_next          = state_ff;
+            word_cnt_next       = word_cnt_ff;
+            rd_addr_next        = rd_addr_ff;
+            vga_rd_req_next     = vga_rd_req_ff;
+            vga_rd_addr_next    = vga_rd_addr_ff;
+            fb_sel_latched_next = fb_sel_latched_ff;
+
             case (state_ff)
 
                 // ---- Wait for vsync rising edge to start a new frame ----
                 S_WAIT_VS: begin
-                    vga_rd_req_ff <= 1'b0;
+                    vga_rd_req_next = 1'b0;
                     if (vs_rising) begin
-                        fb_sel_latched_ff <= fb_select;  // latch buffer choice
-                        word_cnt_ff       <= 13'd0;
-                        rd_addr_ff        <= fb_select ? FB_B : FB_A;
-                        state_ff          <= S_IDLE;
+                        fb_sel_latched_next = fb_select;
+                        word_cnt_next       = 13'd0;
+                        rd_addr_next        = fb_select ? FB_B : FB_A;
+                        state_next          = S_IDLE;
                     end
                 end
 
                 // ---- Check if more data needed and FIFO has room ----
                 S_IDLE: begin
                     if (word_cnt_ff >= WORDS_PER_FRAME) begin
-                        // All words for this frame have been read
-                        state_ff <= S_WAIT_VS;
+                        state_next = S_WAIT_VS;
                     end else if (!fifo_full && !fifo_wr_rst_busy && init_calib_complete && enable) begin
-                        vga_rd_req_ff  <= 1'b1;
-                        vga_rd_addr_ff <= rd_addr_ff;
-                        state_ff       <= S_REQ;
+                        vga_rd_req_next  = 1'b1;
+                        vga_rd_addr_next = rd_addr_ff;
+                        state_next       = S_REQ;
                     end
                 end
 
                 // ---- Hold request until arbiter grants ----
                 S_REQ: begin
                     if (vga_rd_grant) begin
-                        vga_rd_req_ff <= 1'b0;
-                        rd_addr_ff    <= rd_addr_ff + 27'd16; // next 128-bit word
-                        word_cnt_ff   <= word_cnt_ff + 13'd1;
-                        state_ff      <= S_DATA;
+                        vga_rd_req_next = 1'b0;
+                        rd_addr_next    = rd_addr_ff + 27'd16;
+                        word_cnt_next   = word_cnt_ff + 13'd1;
+                        state_next      = S_DATA;
                     end
                 end
 
                 // ---- Wait for MIG to return read data ----
                 S_DATA: begin
                     if (rd_data_valid) begin
-                        state_ff <= S_IDLE;
+                        state_next = S_IDLE;
                     end
                 end
 
-                default: state_ff <= S_WAIT_VS;
+                default: state_next = S_WAIT_VS;
 
             endcase
         end
+    end
+
+    // -----------------------------------------------------------------------
+    // Sequential block — flops only
+    // -----------------------------------------------------------------------
+    always @(posedge ui_clk) begin
+        vs_meta_ff        <= vs_meta_next;
+        vs_sync_ff        <= vs_sync_next;
+        vs_prev_ff        <= vs_prev_next;
+        fb_sel_latched_ff <= fb_sel_latched_next;
+        state_ff          <= state_next;
+        word_cnt_ff       <= word_cnt_next;
+        rd_addr_ff        <= rd_addr_next;
+        vga_rd_req_ff     <= vga_rd_req_next;
+        vga_rd_addr_ff    <= vga_rd_addr_next;
     end
 
 endmodule

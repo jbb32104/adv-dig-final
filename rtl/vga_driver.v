@@ -1,3 +1,5 @@
+`timescale 1ns / 1ps
+
 module vga_driver (
     input  wire        clk_vga,      // 25 MHz pixel clock
     input  wire        rst,          // synchronous reset
@@ -12,7 +14,7 @@ module vga_driver (
     // pixel_fifo read port (FWFT, 16-bit, no pipeline registers)
     input  wire [15:0] fifo_dout,
     input  wire        fifo_empty,
-    output wire        fifo_rd_en,   // combinational — not registered
+    output reg         fifo_rd_en,   // combinational
 
     // Sprite overlay inputs (clk_vga domain)
     input  wire        sprite_en,    // high = composite sprite (screen 0)
@@ -50,36 +52,26 @@ module vga_driver (
     localparam [7:0] BG_COLOR = 8'h00;
 
     //==================//
-    // INTERNAL SIGNALS //
+    // REGISTERED STATE //
     //==================//
-    reg        pixel_sel_ff, pixel_sel_next;
-    reg  [3:0] vga_r_next, vga_g_next, vga_b_next;
+    reg        pixel_sel_ff;
+    reg        fetch_active_ff;
+    reg [3:0]  fetch_cnt_ff;
+    reg [3:0]  fetch_row_ff;
+    reg        glyph_valid_ff;
+    reg [7:0]  glyph_buf [0:11];
+
+    //==============================//
+    // COMBINATIONAL NEXT SIGNALS   //
+    //==============================//
+    reg [3:0]  vga_r_next, vga_g_next, vga_b_next;
     reg        vga_hs_next, vga_vs_next;
-
-    // Text line detection
-    wire in_line0 = (y_in >= LINE0_Y_START) && (y_in < LINE0_Y_START + LINE0_HEIGHT);
-    wire in_line1 = (y_in >= LINE1_Y_START) && (y_in < LINE1_Y_START + LINE12_HEIGHT);
-    wire in_line2 = (y_in >= LINE2_Y_START) && (y_in < LINE2_Y_START + LINE12_HEIGHT);
-    wire in_text_line  = in_line0 || in_line1 || in_line2;
-    wire in_text_pixel = video_on_in && in_text_line;
-
-    // FIFO read enable: pop on second pixel of each 16-bit pair
-    // Combinational so FIFO sees rd_en at the same posedge and advances dout by next cycle
-    assign fifo_rd_en = in_text_pixel && !fifo_empty && pixel_sel_ff;
-
-    // Pixel selection from 16-bit FIFO word
-    // pixel_sel_ff=0: first pixel (high byte), pixel_sel_ff=1: second pixel (low byte)
-    wire [7:0] pixel_byte = pixel_sel_ff ? fifo_dout[7:0] : fifo_dout[15:8];
-
-    // 8-bit RGB332 to 12-bit RGB444 expansion
-    wire [3:0] pixel_r = {pixel_byte[7:5], pixel_byte[7]};
-    wire [3:0] pixel_g = {pixel_byte[4:2], pixel_byte[4]};
-    wire [3:0] pixel_b = {pixel_byte[1:0], pixel_byte[1:0]};
-
-    // Background color expansion (constant)
-    wire [3:0] bg_r = {BG_COLOR[7:5], BG_COLOR[7]};
-    wire [3:0] bg_g = {BG_COLOR[4:2], BG_COLOR[4]};
-    wire [3:0] bg_b = {BG_COLOR[1:0], BG_COLOR[1:0]};
+    reg        pixel_sel_next;
+    reg        fetch_active_next;
+    reg [3:0]  fetch_cnt_next;
+    reg [3:0]  fetch_row_next;
+    reg        glyph_valid_next;
+    reg [7:0]  glyph_buf_next [0:11];
 
     // =========================================================================
     // Sprite font ROM (dedicated instance, clocked on clk_vga)
@@ -118,111 +110,83 @@ module vga_driver (
     endfunction
 
     // =========================================================================
-    // Sprite glyph pre-fetch FSM  (runs during hblank, ~160 cycles available)
-    //
-    // At x_in == 640 (first hblank pixel), if the NEXT scanline is within the
-    // sprite Y range, fetch all 12 font glyph rows into glyph_buf[].
-    //
-    // Pipeline:  cycle 0 — address ROM with char[0]
-    //            cycle 1 — ROM output = glyph[0]; address char[1]; capture [0]
-    //            ...
-    //            cycle 12 — ROM output = glyph[11]; capture [11]; done
-    //
-    // Total: 13 cycles from trigger.  Well within the 160-cycle hblank.
+    // Combinational helper signals
     // =========================================================================
-    reg [7:0]  glyph_buf [0:11];  // pre-fetched glyph rows
-    reg        fetch_active_ff;
-    reg [3:0]  fetch_cnt_ff;      // 0..12 during fetch
-    reg [3:0]  fetch_row_ff;      // font row for this fetch
-    reg        glyph_valid_ff;    // buffer contains valid data for current line
+    reg        in_line0, in_line1, in_line2;
+    reg        in_text_line, in_text_pixel;
+    reg [7:0]  pixel_byte;
+    reg [3:0]  pixel_r, pixel_g, pixel_b;
+    reg [3:0]  bg_r, bg_g, bg_b;
+    reg [9:0]  y_next_line;
+    reg        next_in_spr_y;
+    reg [9:0]  glyph_rel_y;
+    reg [3:0]  font_row_next;
+    reg        fetch_trigger;
+    reg [9:0]  glyph_x0, glyph_y0;
+    reg        in_spr_x, in_spr_y, in_sprite;
+    reg        in_glyph_x, in_glyph_y, in_glyph;
+    reg [7:0]  spr_rel_x;
+    reg [3:0]  spr_char_idx;
+    reg [2:0]  spr_font_col;
+    reg [7:0]  spr_glyph_byte;
+    reg        spr_fg;
+    reg [3:0]  spr_r, spr_g, spr_b;
 
-    // Next scanline Y (handles frame wrap)
-    wire [9:0] y_next = (y_in == 10'd524) ? 10'd0 : y_in + 10'd1;
-
-    // Is the next scanline within the expanded sprite box?
-    wire next_in_spr_y = (y_next >= sprite_y) && (y_next < sprite_y + SPRITE_H);
-
-    // Font row for the next scanline (relative to glyph, 2x vertical)
-    // Clamp to valid range: border rows (0 and SPRITE_H-1) use row 0 / row 15
-    wire [9:0] glyph_rel_y = y_next - sprite_y;
-    wire [3:0] font_row_next = (glyph_rel_y <= 10'd0) ? 4'd0
-                             : (glyph_rel_y >= GLYPH_H) ? 4'd15
-                             : (glyph_rel_y - 10'd1) >> 1; // 0-15
-
-    // Fetch trigger: first pixel of hblank, sprite enabled, next line in range
-    wire fetch_trigger = (x_in == 10'd640) && sprite_en && next_in_spr_y;
-
-    // ROM address driving (combinational, active during fetch)
     always @(*) begin
-        if (fetch_active_ff && fetch_cnt_ff < SPRITE_CHARS)  begin
-            spr_rom_char = sprite_char_fn(fetch_cnt_ff);
-            spr_rom_row  = fetch_row_ff;
-        end else begin
-            spr_rom_char = 7'd0;
-            spr_rom_row  = 4'd0;
-        end
-    end
+        // Text line detection
+        in_line0 = (y_in >= LINE0_Y_START) && (y_in < LINE0_Y_START + LINE0_HEIGHT);
+        in_line1 = (y_in >= LINE1_Y_START) && (y_in < LINE1_Y_START + LINE12_HEIGHT);
+        in_line2 = (y_in >= LINE2_Y_START) && (y_in < LINE2_Y_START + LINE12_HEIGHT);
+        in_text_line  = in_line0 || in_line1 || in_line2;
+        in_text_pixel = video_on_in && in_text_line;
 
-    // Fetch sequential logic
-    integer gi;
-    always @(posedge clk_vga) begin
-        if (rst) begin
-            fetch_active_ff <= 1'b0;
-            fetch_cnt_ff    <= 4'd0;
-            glyph_valid_ff  <= 1'b0;
-            for (gi = 0; gi < 12; gi = gi + 1)
-                glyph_buf[gi] <= 8'd0;
-        end else begin
-            if (fetch_trigger && !fetch_active_ff) begin
-                // Start a new fetch
-                fetch_active_ff <= 1'b1;
-                fetch_cnt_ff    <= 4'd0;
-                fetch_row_ff    <= font_row_next;
-                glyph_valid_ff  <= 1'b0; // mark invalid during fetch
-            end else if (fetch_active_ff) begin
-                // Capture ROM output from the previous address cycle
-                if (fetch_cnt_ff > 4'd0)
-                    glyph_buf[fetch_cnt_ff - 1] <= spr_rom_pixels;
+        // Pixel selection from 16-bit FIFO word
+        // pixel_sel_ff=0: first pixel (high byte), pixel_sel_ff=1: second pixel (low byte)
+        pixel_byte = pixel_sel_ff ? fifo_dout[7:0] : fifo_dout[15:8];
 
-                if (fetch_cnt_ff == SPRITE_CHARS) begin
-                    // All 12 bytes captured
-                    fetch_active_ff <= 1'b0;
-                    glyph_valid_ff  <= 1'b1;
-                end else begin
-                    fetch_cnt_ff <= fetch_cnt_ff + 4'd1;
-                end
-            end
+        // 8-bit RGB332 to 12-bit RGB444 expansion
+        pixel_r = {pixel_byte[7:5], pixel_byte[7]};
+        pixel_g = {pixel_byte[4:2], pixel_byte[4]};
+        pixel_b = {pixel_byte[1:0], pixel_byte[1:0]};
 
-            // Invalidate when sprite is disabled
-            if (!sprite_en)
-                glyph_valid_ff <= 1'b0;
-        end
-    end
+        // Background color expansion (constant)
+        bg_r = {BG_COLOR[7:5], BG_COLOR[7]};
+        bg_g = {BG_COLOR[4:2], BG_COLOR[4]};
+        bg_b = {BG_COLOR[1:0], BG_COLOR[1:0]};
 
-    // =========================================================================
-    // Sprite compositing — combinational pixel lookup
-    // =========================================================================
-    // Expanded bounding box check (includes 1 px border)
-    wire in_spr_x = (x_in >= sprite_x) && (x_in < sprite_x + SPRITE_W);
-    wire in_spr_y = (y_in >= sprite_y) && (y_in < sprite_y + SPRITE_H);
-    wire in_sprite = sprite_en && glyph_valid_ff && in_spr_x && in_spr_y;
+        // Next scanline Y (handles frame wrap)
+        y_next_line = (y_in == 10'd524) ? 10'd0 : y_in + 10'd1;
 
-    // Glyph region (1 px inward from the expanded box edges)
-    wire [9:0] glyph_x0 = sprite_x + 10'd1;
-    wire [9:0] glyph_y0 = sprite_y + 10'd1;
-    wire in_glyph_x = (x_in >= glyph_x0) && (x_in < glyph_x0 + GLYPH_W);
-    wire in_glyph_y = (y_in >= glyph_y0) && (y_in < glyph_y0 + GLYPH_H);
-    wire in_glyph   = in_glyph_x && in_glyph_y;
+        // Is the next scanline within the expanded sprite box?
+        next_in_spr_y = (y_next_line >= sprite_y) && (y_next_line < sprite_y + SPRITE_H);
 
-    // Relative coordinates within glyph (offset by 1 for the border)
-    wire [7:0] spr_rel_x = x_in[7:0] - glyph_x0[7:0]; // 0-191
-    wire [3:0] spr_char_idx  = spr_rel_x[7:4];          // character 0-11
-    wire [2:0] spr_font_col  = spr_rel_x[3:1];          // font pixel 0-7 (2x horiz)
+        // Font row for the next scanline (relative to glyph, 2x vertical)
+        glyph_rel_y = y_next_line - sprite_y;
+        font_row_next = (glyph_rel_y <= 10'd0) ? 4'd0
+                      : (glyph_rel_y >= GLYPH_H) ? 4'd15
+                      : (glyph_rel_y - 10'd1) >> 1;
 
-    // Look up glyph buffer and select the correct bit
-    // font_pixels[7] = leftmost pixel, [0] = rightmost
-    reg [7:0] spr_glyph_byte;
-    always @(*) begin
+        // Fetch trigger: first pixel of hblank, sprite enabled, next line in range
+        fetch_trigger = (x_in == 10'd640) && sprite_en && next_in_spr_y;
+
+        // Sprite bounding box check (includes 1 px border)
+        in_spr_x  = (x_in >= sprite_x) && (x_in < sprite_x + SPRITE_W);
+        in_spr_y  = (y_in >= sprite_y) && (y_in < sprite_y + SPRITE_H);
+        in_sprite = sprite_en && glyph_valid_ff && in_spr_x && in_spr_y;
+
+        // Glyph region (1 px inward from the expanded box edges)
+        glyph_x0    = sprite_x + 10'd1;
+        glyph_y0    = sprite_y + 10'd1;
+        in_glyph_x  = (x_in >= glyph_x0) && (x_in < glyph_x0 + GLYPH_W);
+        in_glyph_y  = (y_in >= glyph_y0) && (y_in < glyph_y0 + GLYPH_H);
+        in_glyph    = in_glyph_x && in_glyph_y;
+
+        // Relative coordinates within glyph (offset by 1 for the border)
+        spr_rel_x    = x_in[7:0] - glyph_x0[7:0];
+        spr_char_idx = spr_rel_x[7:4];
+        spr_font_col = spr_rel_x[3:1];
+
+        // Look up glyph buffer and select the correct bit
         case (spr_char_idx)
             4'd0:    spr_glyph_byte = glyph_buf[0];
             4'd1:    spr_glyph_byte = glyph_buf[1];
@@ -238,85 +202,161 @@ module vga_driver (
             4'd11:   spr_glyph_byte = glyph_buf[11];
             default: spr_glyph_byte = 8'd0;
         endcase
+
+        spr_fg = spr_glyph_byte[3'd7 - spr_font_col];
+
+        // Sprite color: RGB332 -> RGB444 expansion
+        spr_r = {sprite_color[7:5], sprite_color[7]};
+        spr_g = {sprite_color[4:2], sprite_color[4]};
+        spr_b = {sprite_color[1:0], sprite_color[1:0]};
     end
 
-    wire spr_fg = spr_glyph_byte[3'd7 - spr_font_col];
-
-    // Sprite color: RGB332 -> RGB444 expansion
-    wire [3:0] spr_r = {sprite_color[7:5], sprite_color[7]};
-    wire [3:0] spr_g = {sprite_color[4:2], sprite_color[4]};
-    wire [3:0] spr_b = {sprite_color[1:0], sprite_color[1:0]};
-
-    // ==========================================================================
-    // Combinational Block — pixel output with sprite overlay
-    // ==========================================================================
+    // =========================================================================
+    // Sprite ROM address driving (combinational, active during fetch)
+    // =========================================================================
     always @(*) begin
-        // Defaults
-        vga_hs_next    = hsync_in;
-        vga_vs_next    = vsync_in;
-        vga_r_next     = 4'd0;
-        vga_g_next     = 4'd0;
-        vga_b_next     = 4'd0;
-        pixel_sel_next = 1'b0;
+        if (fetch_active_ff && fetch_cnt_ff < SPRITE_CHARS) begin
+            spr_rom_char = sprite_char_fn(fetch_cnt_ff);
+            spr_rom_row  = fetch_row_ff;
+        end else begin
+            spr_rom_char = 7'd0;
+            spr_rom_row  = 4'd0;
+        end
+    end
 
+    // =========================================================================
+    // FIFO read enable (combinational)
+    // =========================================================================
+    always @(*) begin
+        fifo_rd_en = in_text_pixel && !fifo_empty && pixel_sel_ff;
+    end
+
+    // =========================================================================
+    // Sprite glyph pre-fetch — combinational next-state
+    // =========================================================================
+    integer gi;
+    always @(*) begin
+        if (rst) begin
+            fetch_active_next = 1'b0;
+            fetch_cnt_next    = 4'd0;
+            fetch_row_next    = 4'd0;
+            glyph_valid_next  = 1'b0;
+            for (gi = 0; gi < 12; gi = gi + 1)
+                glyph_buf_next[gi] = 8'd0;
+        end else begin
+            // Defaults: hold
+            fetch_active_next = fetch_active_ff;
+            fetch_cnt_next    = fetch_cnt_ff;
+            fetch_row_next    = fetch_row_ff;
+            glyph_valid_next  = glyph_valid_ff;
+            for (gi = 0; gi < 12; gi = gi + 1)
+                glyph_buf_next[gi] = glyph_buf[gi];
+
+            if (fetch_trigger && !fetch_active_ff) begin
+                // Start a new fetch
+                fetch_active_next = 1'b1;
+                fetch_cnt_next    = 4'd0;
+                fetch_row_next    = font_row_next;
+                glyph_valid_next  = 1'b0;
+            end else if (fetch_active_ff) begin
+                // Capture ROM output from the previous address cycle
+                if (fetch_cnt_ff > 4'd0)
+                    glyph_buf_next[fetch_cnt_ff - 1] = spr_rom_pixels;
+
+                if (fetch_cnt_ff == SPRITE_CHARS) begin
+                    // All 12 bytes captured
+                    fetch_active_next = 1'b0;
+                    glyph_valid_next  = 1'b1;
+                end else begin
+                    fetch_cnt_next = fetch_cnt_ff + 4'd1;
+                end
+            end
+
+            // Invalidate when sprite is disabled
+            if (!sprite_en)
+                glyph_valid_next = 1'b0;
+        end
+    end
+
+    // =========================================================================
+    // Pixel output with sprite overlay — combinational next-state
+    // =========================================================================
+    always @(*) begin
         if (rst) begin
             vga_hs_next    = 1'b0;
             vga_vs_next    = 1'b0;
-        end else if (!video_on_in) begin
-            // Blanking region: black, reset pixel_sel for next scanline
+            vga_r_next     = 4'd0;
+            vga_g_next     = 4'd0;
+            vga_b_next     = 4'd0;
             pixel_sel_next = 1'b0;
-        end else if (in_text_line) begin
-            if (fifo_empty) begin
-                // FIFO underrun: magenta (visible debug indicator)
-                vga_r_next = 4'hF;
-                vga_g_next = 4'h0;
-                vga_b_next = 4'hF;
-            end else begin
-                // Text pixel from FIFO
-                vga_r_next     = pixel_r;
-                vga_g_next     = pixel_g;
-                vga_b_next     = pixel_b;
-                pixel_sel_next = ~pixel_sel_ff;
-            end
         end else begin
-            // Non-text visible region: background color
-            vga_r_next = bg_r;
-            vga_g_next = bg_g;
-            vga_b_next = bg_b;
-        end
+            // Defaults
+            vga_hs_next    = hsync_in;
+            vga_vs_next    = vsync_in;
+            vga_r_next     = 4'd0;
+            vga_g_next     = 4'd0;
+            vga_b_next     = 4'd0;
+            pixel_sel_next = 1'b0;
 
-        // --- Sprite underlay (behind framebuffer foreground text only) ---
-        // Show sprite through background pixels, even inside text line bands.
-        // Framebuffer text (non-BG pixels) draws on top of the sprite.
-        if (in_sprite && video_on_in) begin
-            // Determine if the framebuffer pixel is foreground text
-            // (in a text line, FIFO not empty, and pixel is not BG_COLOR)
-            if (in_text_line && !fifo_empty && pixel_byte != BG_COLOR) begin
-                // Framebuffer text wins — already assigned above, keep it
-            end else if (in_glyph && spr_fg) begin
-                // Sprite foreground glyph pixel: rainbow color
-                vga_r_next = spr_r;
-                vga_g_next = spr_g;
-                vga_b_next = spr_b;
+            if (!video_on_in) begin
+                // Blanking region: black, reset pixel_sel for next scanline
+                pixel_sel_next = 1'b0;
+            end else if (in_text_line) begin
+                if (fifo_empty) begin
+                    // FIFO underrun: magenta (visible debug indicator)
+                    vga_r_next = 4'hF;
+                    vga_g_next = 4'h0;
+                    vga_b_next = 4'hF;
+                end else begin
+                    // Text pixel from FIFO
+                    vga_r_next     = pixel_r;
+                    vga_g_next     = pixel_g;
+                    vga_b_next     = pixel_b;
+                    pixel_sel_next = ~pixel_sel_ff;
+                end
             end else begin
-                // Border pixel or glyph background: opaque black
+                // Non-text visible region: background color
                 vga_r_next = bg_r;
                 vga_g_next = bg_g;
                 vga_b_next = bg_b;
             end
+
+            // --- Sprite underlay (behind framebuffer foreground text only) ---
+            if (in_sprite && video_on_in) begin
+                if (in_text_line && !fifo_empty && pixel_byte != BG_COLOR) begin
+                    // Framebuffer text wins — already assigned above, keep it
+                end else if (in_glyph && spr_fg) begin
+                    // Sprite foreground glyph pixel: rainbow color
+                    vga_r_next = spr_r;
+                    vga_g_next = spr_g;
+                    vga_b_next = spr_b;
+                end else begin
+                    // Border pixel or glyph background: opaque black
+                    vga_r_next = bg_r;
+                    vga_g_next = bg_g;
+                    vga_b_next = bg_b;
+                end
+            end
         end
     end
 
-    // ==========================================================================
-    // Sequential Block
-    // ==========================================================================
+    // =========================================================================
+    // Sequential block — flops only
+    // =========================================================================
+    integer si;
     always @(posedge clk_vga) begin
-        vga_r_ff     <= vga_r_next;
-        vga_g_ff     <= vga_g_next;
-        vga_b_ff     <= vga_b_next;
-        vga_hs_ff    <= vga_hs_next;
-        vga_vs_ff    <= vga_vs_next;
-        pixel_sel_ff <= pixel_sel_next;
+        vga_r_ff        <= vga_r_next;
+        vga_g_ff        <= vga_g_next;
+        vga_b_ff        <= vga_b_next;
+        vga_hs_ff       <= vga_hs_next;
+        vga_vs_ff       <= vga_vs_next;
+        pixel_sel_ff    <= pixel_sel_next;
+        fetch_active_ff <= fetch_active_next;
+        fetch_cnt_ff    <= fetch_cnt_next;
+        fetch_row_ff    <= fetch_row_next;
+        glyph_valid_ff  <= glyph_valid_next;
+        for (si = 0; si < 12; si = si + 1)
+            glyph_buf[si] <= glyph_buf_next[si];
     end
 
 endmodule
