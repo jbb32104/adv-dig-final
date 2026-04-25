@@ -22,8 +22,9 @@
 module frame_renderer #(
     parameter [26:0] FB_A     = 27'h050_0000,
     parameter [26:0] FB_B     = 27'h050_A000,
-    parameter [7:0]  FG_COLOR = 8'hFF,        // white (RGB332)
-    parameter [7:0]  BG_COLOR = 8'h00         // black (RGB332)
+    parameter [7:0]  FG_COLOR = 8'hFF,        // white  (RGB332)
+    parameter [7:0]  BG_COLOR = 8'h00,        // black  (RGB332)
+    parameter [7:0]  HL_COLOR = 8'hE0         // red    (RGB332) — cursor highlight
 ) (
     input  wire        ui_clk,
     input  wire        rst_n,
@@ -31,6 +32,11 @@ module frame_renderer #(
 
     // Screen ID (clk domain — CDC'd internally)
     input  wire [2:0]  screen_id,
+
+    // Dynamic digit display (clk domain — CDC'd internally)
+    input  wire [31:0] bcd_digits,    // 8 BCD digits: d7[31:28]..d0[3:0]
+    input  wire [3:0]  cursor_pos,    // active cursor digit index (0-7)
+    input  wire        digit_toggle,  // flips on each digit change (edge-detect trigger)
 
     // Which buffer to write: 0 = FB_A, 1 = FB_B
     input  wire        render_buf,
@@ -53,6 +59,29 @@ module frame_renderer #(
         sid_meta_ff <= screen_id;
         sid_sync_ff <= sid_meta_ff;
     end
+
+    // -----------------------------------------------------------------------
+    // Digit data CDC (clk -> ui_clk): 2-FF synchronizers
+    // These are slow-changing (human keypad presses), safe for multi-bit CDC.
+    // -----------------------------------------------------------------------
+    reg [31:0] bcd_meta_ff, bcd_sync_ff;
+    reg [3:0]  cur_meta_ff, cur_sync_ff;
+    reg        dtog_meta_ff, dtog_sync_ff;
+    reg        dtog_rendered_ff;  // toggle value at last render start
+
+    always @(posedge ui_clk) begin
+        bcd_meta_ff  <= bcd_digits;
+        bcd_sync_ff  <= bcd_meta_ff;
+        cur_meta_ff  <= cursor_pos;
+        cur_sync_ff  <= cur_meta_ff;
+        dtog_meta_ff <= digit_toggle;
+        dtog_sync_ff <= dtog_meta_ff;
+    end
+
+    // digit_dirty: true when digits changed since last render started.
+    // Cannot be missed even if renderer is busy — compares current toggle
+    // to the value latched at render start.
+    wire digit_dirty = (dtog_sync_ff != dtog_rendered_ff);
 
     // -----------------------------------------------------------------------
     // Internal ROM instances (clocked on ui_clk)
@@ -107,6 +136,8 @@ module frame_renderer #(
     reg [2:0]   sid_prev_ff;
     reg         first_ff;
     reg [7:0]   glyph_a_ff;
+    reg         cursor_a_ff;   // char A of current word is the cursor digit
+    reg         cursor_b_ff;   // char B of current word is the cursor digit
 
     // -----------------------------------------------------------------------
     // Combinational next-state signals
@@ -120,6 +151,9 @@ module frame_renderer #(
     reg [2:0]   sid_prev_next;
     reg         first_next;
     reg [7:0]   glyph_a_next;
+    reg         cursor_a_next;
+    reg         cursor_b_next;
+    reg         dtog_rendered_next;
     reg         wr_req_next;
     reg [26:0]  wr_addr_next;
     reg [127:0] wr_data_next;
@@ -139,6 +173,61 @@ module frame_renderer #(
     reg [127:0] word_1x;
     reg         trigger;
 
+    // Per-character foreground color (white normally, red for cursor digit)
+    reg [7:0]   fg_a, fg_b;
+
+    // -----------------------------------------------------------------------
+    // Digit position lookup — maps (screen_id, char_pos) to digit index.
+    // Returns 4'hF when the position is not a dynamic digit.
+    // -----------------------------------------------------------------------
+    // Screen 1 & 3 (8-digit):  "     00 000 000     "
+    //   pos 5→d7, 6→d6,  8→d5, 9→d4, 10→d3,  12→d2, 13→d1, 14→d0
+    // Screen 2 (4-digit):      "     0 000  SEC     "
+    //   pos 5→d3,  7→d2, 8→d1, 9→d0
+    // -----------------------------------------------------------------------
+    reg [3:0] dig_idx_a, dig_idx_b;   // digit index for char A/B
+    reg [3:0] dig_val_a, dig_val_b;   // BCD value for char A/B
+    reg       dig_en_a,  dig_en_b;    // position is a dynamic digit
+
+    // Lookup digit index for an 8-digit screen (screens 1 & 3)
+    function [3:0] idx8;
+        input [4:0] p;
+        case (p)
+            5'd5:  idx8 = 4'd7;  5'd6:  idx8 = 4'd6;
+            5'd8:  idx8 = 4'd5;  5'd9:  idx8 = 4'd4;  5'd10: idx8 = 4'd3;
+            5'd12: idx8 = 4'd2;  5'd13: idx8 = 4'd1;  5'd14: idx8 = 4'd0;
+            default: idx8 = 4'hF;
+        endcase
+    endfunction
+
+    // Lookup digit index for a 4-digit screen (screen 2)
+    function [3:0] idx4;
+        input [4:0] p;
+        case (p)
+            5'd5: idx4 = 4'd3;
+            5'd7: idx4 = 4'd2;  5'd8: idx4 = 4'd1;  5'd9: idx4 = 4'd0;
+            default: idx4 = 4'hF;
+        endcase
+    endfunction
+
+    // Extract one BCD digit from the 32-bit bus
+    function [3:0] bcd_val;
+        input [31:0] bcd;
+        input [3:0]  idx;
+        case (idx)
+            4'd0: bcd_val = bcd[3:0];    4'd1: bcd_val = bcd[7:4];
+            4'd2: bcd_val = bcd[11:8];   4'd3: bcd_val = bcd[15:12];
+            4'd4: bcd_val = bcd[19:16];  4'd5: bcd_val = bcd[23:20];
+            4'd6: bcd_val = bcd[27:24];  4'd7: bcd_val = bcd[31:28];
+            default: bcd_val = 4'd0;
+        endcase
+    endfunction
+
+    // Is a given screen one with dynamic digit entry on line 1?
+    wire is_digit_screen = (render_sid_ff == 3'd1) ||
+                           (render_sid_ff == 3'd2) ||
+                           (render_sid_ff == 3'd3);
+
     always @(*) begin
         is_line0 = (line_idx_ff == 2'd0);
 
@@ -156,8 +245,27 @@ module frame_renderer #(
         char_a_pos  = {word_off_12[3:0], 1'b0};
         char_b_pos  = {word_off_12[3:0], 1'b1};
 
+        // Digit position lookup for char A and char B
+        if (render_sid_ff == 3'd2) begin
+            dig_idx_a = idx4(char_a_pos);
+            dig_idx_b = idx4(char_b_pos);
+        end else begin
+            dig_idx_a = idx8(char_a_pos);
+            dig_idx_b = idx8(char_b_pos);
+        end
+
+        dig_en_a = is_digit_screen && (line_idx_ff == 2'd1) && (dig_idx_a != 4'hF);
+        dig_en_b = is_digit_screen && (line_idx_ff == 2'd1) && (dig_idx_b != 4'hF);
+
+        dig_val_a = bcd_val(bcd_sync_ff, dig_idx_a);
+        dig_val_b = bcd_val(bcd_sync_ff, dig_idx_b);
+
         // Background word: 16 pixels of BG_COLOR
         bg_word = {16{BG_COLOR}};
+
+        // Per-character foreground: red for cursor digit, white otherwise
+        fg_a = (cursor_a_ff && line_idx_ff == 2'd1) ? HL_COLOR : FG_COLOR;
+        fg_b = (cursor_b_ff && line_idx_ff == 2'd1) ? HL_COLOR : FG_COLOR;
 
         // 2x expanded word: each glyph bit -> 2 adjacent pixels (line 0)
         word_2x = {
@@ -172,32 +280,35 @@ module frame_renderer #(
         };
 
         // 1x word: glyph A (8 px) + glyph B (8 px) = 16 pixels (lines 1-2)
+        // Uses per-character foreground color for cursor highlight
         word_1x = {
-            glyph_a_ff[7] ? FG_COLOR : BG_COLOR,
-            glyph_a_ff[6] ? FG_COLOR : BG_COLOR,
-            glyph_a_ff[5] ? FG_COLOR : BG_COLOR,
-            glyph_a_ff[4] ? FG_COLOR : BG_COLOR,
-            glyph_a_ff[3] ? FG_COLOR : BG_COLOR,
-            glyph_a_ff[2] ? FG_COLOR : BG_COLOR,
-            glyph_a_ff[1] ? FG_COLOR : BG_COLOR,
-            glyph_a_ff[0] ? FG_COLOR : BG_COLOR,
-            font_pixels[7] ? FG_COLOR : BG_COLOR,
-            font_pixels[6] ? FG_COLOR : BG_COLOR,
-            font_pixels[5] ? FG_COLOR : BG_COLOR,
-            font_pixels[4] ? FG_COLOR : BG_COLOR,
-            font_pixels[3] ? FG_COLOR : BG_COLOR,
-            font_pixels[2] ? FG_COLOR : BG_COLOR,
-            font_pixels[1] ? FG_COLOR : BG_COLOR,
-            font_pixels[0] ? FG_COLOR : BG_COLOR
+            glyph_a_ff[7] ? fg_a : BG_COLOR,
+            glyph_a_ff[6] ? fg_a : BG_COLOR,
+            glyph_a_ff[5] ? fg_a : BG_COLOR,
+            glyph_a_ff[4] ? fg_a : BG_COLOR,
+            glyph_a_ff[3] ? fg_a : BG_COLOR,
+            glyph_a_ff[2] ? fg_a : BG_COLOR,
+            glyph_a_ff[1] ? fg_a : BG_COLOR,
+            glyph_a_ff[0] ? fg_a : BG_COLOR,
+            font_pixels[7] ? fg_b : BG_COLOR,
+            font_pixels[6] ? fg_b : BG_COLOR,
+            font_pixels[5] ? fg_b : BG_COLOR,
+            font_pixels[4] ? fg_b : BG_COLOR,
+            font_pixels[3] ? fg_b : BG_COLOR,
+            font_pixels[2] ? fg_b : BG_COLOR,
+            font_pixels[1] ? fg_b : BG_COLOR,
+            font_pixels[0] ? fg_b : BG_COLOR
         };
 
-        // Trigger: screen_id changed or first render after calibration
+        // Trigger: screen_id changed, first render, or digits changed
         trigger = init_calib_complete &&
-                  (first_ff || (sid_sync_ff != sid_prev_ff));
+                  (first_ff || (sid_sync_ff != sid_prev_ff) || digit_dirty);
     end
 
     // -----------------------------------------------------------------------
-    // Combinational ROM address driving
+    // Combinational ROM address driving + digit override
+    // When rendering line 1 on screens 1-3, dynamic digit positions
+    // override the ROM char code with the BCD digit + 0x30 (ASCII '0').
     // -----------------------------------------------------------------------
     always @(*) begin
         txt_sid   = render_sid_ff;
@@ -215,7 +326,11 @@ module frame_renderer #(
             end
 
             S_TEXT_ROM_A: begin
-                font_char = txt_code[6:0];
+                // Char A: override with dynamic digit if applicable
+                if (dig_en_a)
+                    font_char = {3'd0, dig_val_a} + 7'h30;  // ASCII '0'-'9'
+                else
+                    font_char = txt_code[6:0];
                 font_row  = is_line0 ? pixel_row_ff[4:1] : pixel_row_ff[3:0];
                 if (!is_line0)
                     txt_pos = char_b_pos;
@@ -223,7 +338,11 @@ module frame_renderer #(
 
             S_FONT_ROM_A: begin
                 if (!is_line0) begin
-                    font_char = txt_code[6:0];
+                    // Char B: override with dynamic digit if applicable
+                    if (dig_en_b)
+                        font_char = {3'd0, dig_val_b} + 7'h30;
+                    else
+                        font_char = txt_code[6:0];
                     font_row  = pixel_row_ff[3:0];
                 end
             end
@@ -244,28 +363,34 @@ module frame_renderer #(
             addr_next        = FB_A;
             render_sid_next  = 3'd0;
             sid_prev_next    = 3'd0;
-            first_next       = 1'b1;
-            glyph_a_next     = 8'd0;
-            wr_req_next      = 1'b0;
-            wr_addr_next     = 27'd0;
-            wr_data_next     = 128'd0;
-            render_done_next = 1'b0;
+            first_next          = 1'b1;
+            glyph_a_next        = 8'd0;
+            cursor_a_next       = 1'b0;
+            cursor_b_next       = 1'b0;
+            dtog_rendered_next  = 1'b0;
+            wr_req_next         = 1'b0;
+            wr_addr_next        = 27'd0;
+            wr_data_next        = 128'd0;
+            render_done_next    = 1'b0;
         end else begin
 
         // Default: hold all registers
-        state_next       = state_ff;
-        line_idx_next    = line_idx_ff;
-        pixel_row_next   = pixel_row_ff;
-        word_idx_next    = word_idx_ff;
-        addr_next        = addr_ff;
-        render_sid_next  = render_sid_ff;
-        sid_prev_next    = sid_prev_ff;
-        first_next       = first_ff;
-        glyph_a_next     = glyph_a_ff;
-        wr_req_next      = wr_req_ff;
-        wr_addr_next     = wr_addr_ff;
-        wr_data_next     = wr_data_ff;
-        render_done_next = render_done_ff;
+        state_next          = state_ff;
+        line_idx_next       = line_idx_ff;
+        pixel_row_next      = pixel_row_ff;
+        word_idx_next       = word_idx_ff;
+        addr_next           = addr_ff;
+        render_sid_next     = render_sid_ff;
+        sid_prev_next       = sid_prev_ff;
+        first_next          = first_ff;
+        glyph_a_next        = glyph_a_ff;
+        cursor_a_next       = cursor_a_ff;
+        cursor_b_next       = cursor_b_ff;
+        dtog_rendered_next  = dtog_rendered_ff;
+        wr_req_next         = wr_req_ff;
+        wr_addr_next        = wr_addr_ff;
+        wr_data_next        = wr_data_ff;
+        render_done_next    = render_done_ff;
 
         case (state_ff)
 
@@ -278,10 +403,11 @@ module frame_renderer #(
             end
 
             S_SETUP: begin
-                render_sid_next = sid_sync_ff;
-                sid_prev_next   = sid_sync_ff;
-                first_next      = 1'b0;
-                addr_next       = render_buf ? FB_B : FB_A;
+                render_sid_next    = sid_sync_ff;
+                sid_prev_next      = sid_sync_ff;
+                dtog_rendered_next = dtog_sync_ff;   // mark toggle as consumed
+                first_next         = 1'b0;
+                addr_next          = render_buf ? FB_B : FB_A;
                 line_idx_next   = 2'd0;
                 pixel_row_next  = 5'd0;
                 word_idx_next   = 6'd0;
@@ -300,6 +426,10 @@ module frame_renderer #(
             end
 
             S_TEXT_ROM_A: begin
+                // Latch cursor flag for char A
+                cursor_a_next = dig_en_a && (dig_idx_a == cur_sync_ff);
+                // Pre-compute cursor flag for char B
+                cursor_b_next = dig_en_b && (dig_idx_b == cur_sync_ff);
                 state_next = S_FONT_ROM_A;
             end
 
@@ -379,7 +509,10 @@ module frame_renderer #(
         sid_prev_ff    <= sid_prev_next;
         first_ff       <= first_next;
         glyph_a_ff     <= glyph_a_next;
-        wr_req_ff      <= wr_req_next;
+        cursor_a_ff       <= cursor_a_next;
+        cursor_b_ff       <= cursor_b_next;
+        dtog_rendered_ff  <= dtog_rendered_next;
+        wr_req_ff         <= wr_req_next;
         wr_addr_ff     <= wr_addr_next;
         wr_data_ff     <= wr_data_next;
         render_done_ff <= render_done_next;

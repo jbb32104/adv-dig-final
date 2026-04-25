@@ -6,7 +6,7 @@
 //   Port 2: Prime plus      — 6k+1 bitmap writes from accumulator FIFO
 //   Port 3: Prime minus     — 6k-1 bitmap writes from accumulator FIFO
 //
-// screen_id cycles 0-6 on BTND press (debounced).
+// screen_id driven by keypad_nav (A/B/C/D selects mode, * starts, # returns home).
 // Double-buffer swap is edge-triggered on render_done (no partial frames).
 //
 // Clock domains:
@@ -35,6 +35,16 @@ module test_vga_top #(
     input  wire        BTNR,
     input  wire        BTNL,
     input  wire        BTND,
+
+    // Keypad PMOD JA — pin mapping matches physical keypad wiring
+    input  wire        JA1,        // row 1 input
+    input  wire        JA2,        // row 3 input
+    output wire        JA3,        // column 1 output
+    output wire        JA4,        // column 3 output
+    input  wire        JA7,        // row 0 input
+    input  wire        JA8,        // row 2 input
+    output wire        JA9,        // column 0 output
+    output wire        JA10,       // column 2 output
 
     output wire [15:0] LED,
     output wire [6:0]  SEG,
@@ -75,22 +85,10 @@ module test_vga_top #(
     end
 
     // =======================================================================
-    // Input interpretation (from switches)
-    // =======================================================================
-    wire [1:0]       mode_sel        = SW[1:0];
-    wire [WIDTH-1:0] n_limit         = {SW[15:2], {(WIDTH-14){1'b0}}};
-    wire [31:0]      t_limit         = {18'd0, SW[15:2]};
-    wire [WIDTH-1:0] check_candidate = {SW[15:2], {(WIDTH-14){1'b0}}};
-
-    // =======================================================================
     // Debounced button pulses (clk domain)
     // =======================================================================
-    wire go_pulse, btnr_pulse, btnl_pulse;
+    wire btnr_pulse, btnl_pulse;
 
-    debounce #(.DEBOUNCE_CYCLES(500_000)) u_dbnc_btnc (
-        .clk(clk), .rst_n(rst_sync_n), .btn_in(BTNC),
-        .btn_state_ff(), .rising_pulse_ff(go_pulse), .falling_pulse_ff()
-    );
     debounce #(.DEBOUNCE_CYCLES(500_000)) u_dbnc_btnr (
         .clk(clk), .rst_n(rst_sync_n), .btn_in(BTNR),
         .btn_state_ff(), .rising_pulse_ff(btnr_pulse), .falling_pulse_ff()
@@ -100,20 +98,126 @@ module test_vga_top #(
         .btn_state_ff(), .rising_pulse_ff(btnl_pulse), .falling_pulse_ff()
     );
 
-    wire btnd_pulse;
-    debounce #(.DEBOUNCE_CYCLES(500_000)) u_dbnc_btnd (
-        .clk(clk), .rst_n(rst_sync_n), .btn_in(BTND),
-        .btn_state_ff(), .rising_pulse_ff(btnd_pulse), .falling_pulse_ff()
+    // =======================================================================
+    // Keypad — column_driver + row debouncers + row_reader + keypad_nav
+    // Pin mapping matches working keypad_top reference design:
+    //   Columns: c_0→JA9, c_1→JA3, c_2→JA10, c_3→JA4
+    //   Rows:    row_0←JA7, row_1←JA1, row_2←JA8, row_3←JA2
+    // =======================================================================
+    wire        kp_freeze;
+    wire [3:0]  kp_button;
+    wire        kp_button_valid;
+
+    // Column driver — drives one column high at a time
+    column_driver u_col_drv (
+        .clk    (clk),
+        .rst    (~rst_sync_n),
+        .freeze (kp_freeze),
+        .c_0    (JA9),
+        .c_1    (JA3),
+        .c_2    (JA10),
+        .c_3    (JA4)
     );
 
-    // Screen ID counter: cycles 0 -> 1 -> ... -> 6 -> 0 on BTND press
-    reg [2:0] screen_id_ff;
-    always @(posedge clk) begin
-        if (!rst_sync_n)
-            screen_id_ff <= 3'd0;
-        else if (btnd_pulse)
-            screen_id_ff <= (screen_id_ff == 3'd6) ? 3'd0 : screen_id_ff + 3'd1;
-    end
+    // Row debouncers — clean up mechanical bounce before row_reader
+    wire r0_clean, r1_clean, r2_clean, r3_clean;
+
+    debounce #(.DEBOUNCE_CYCLES(1_000_000)) u_db_r0 (
+        .clk(clk), .rst_n(rst_sync_n), .btn_in(JA7),
+        .btn_state_ff(r0_clean), .rising_pulse_ff(), .falling_pulse_ff()
+    );
+    debounce #(.DEBOUNCE_CYCLES(1_000_000)) u_db_r1 (
+        .clk(clk), .rst_n(rst_sync_n), .btn_in(JA1),
+        .btn_state_ff(r1_clean), .rising_pulse_ff(), .falling_pulse_ff()
+    );
+    debounce #(.DEBOUNCE_CYCLES(1_000_000)) u_db_r2 (
+        .clk(clk), .rst_n(rst_sync_n), .btn_in(JA8),
+        .btn_state_ff(r2_clean), .rising_pulse_ff(), .falling_pulse_ff()
+    );
+    debounce #(.DEBOUNCE_CYCLES(1_000_000)) u_db_r3 (
+        .clk(clk), .rst_n(rst_sync_n), .btn_in(JA2),
+        .btn_state_ff(r3_clean), .rising_pulse_ff(), .falling_pulse_ff()
+    );
+
+    // Row reader — decodes which button is pressed from debounced rows + columns
+    row_reader u_row_rdr (
+        .clk            (clk),
+        .rst            (~rst_sync_n),
+        .row_0          (r0_clean),
+        .row_1          (r1_clean),
+        .row_2          (r2_clean),
+        .row_3          (r3_clean),
+        .c_0_ff         (JA9),
+        .c_1_ff         (JA3),
+        .c_2_ff         (JA10),
+        .c_3_ff         (JA4),
+        .button_ff      (kp_button),
+        .button_valid_ff(kp_button_valid),
+        .freeze_out     (kp_freeze)
+    );
+
+    wire [2:0] screen_id_ff;
+    wire [1:0] nav_mode_sel;
+    wire       nav_go;
+    wire       nav_digit_press;
+    wire [3:0] nav_digit_value;
+
+    keypad_nav u_keypad_nav (
+        .clk            (clk),
+        .rst            (~rst_sync_n),
+        .button         (kp_button),
+        .button_valid   (kp_button_valid),
+        .mode_done      (done),
+        .screen_id_ff   (screen_id_ff),
+        .mode_sel_ff    (nav_mode_sel),
+        .go_ff          (nav_go),
+        .digit_press_ff (nav_digit_press),
+        .digit_value_ff (nav_digit_value)
+    );
+
+    // =======================================================================
+    // Digit entry — captures keypad 0-9 presses, manages cursor, outputs BCD
+    // =======================================================================
+    wire [31:0] de_bcd_digits;
+    wire [3:0]  de_cursor_pos;
+    wire        de_changed;
+    wire        de_toggle;
+
+    digit_entry u_digit_entry (
+        .clk           (clk),
+        .rst           (~rst_sync_n),
+        .screen_id     (screen_id_ff),
+        .digit_press   (nav_digit_press),
+        .digit_value   (nav_digit_value),
+        .bcd_digits_ff (de_bcd_digits),
+        .cursor_pos_ff (de_cursor_pos),
+        .changed_ff    (de_changed),
+        .toggle_ff     (de_toggle)
+    );
+
+    // =======================================================================
+    // BCD-to-binary converter — 7 DSP multipliers + looping accumulator
+    // =======================================================================
+    wire [26:0] bin_value;
+    wire        bin_valid;
+
+    bcd_to_bin u_bcd_to_bin (
+        .clk          (clk),
+        .rst          (~rst_sync_n),
+        .bcd_digits   (de_bcd_digits),
+        .start        (de_changed),
+        .bin_value_ff (bin_value),
+        .valid_ff     (bin_valid)
+    );
+
+    // =======================================================================
+    // Input interpretation — from keypad BCD-to-binary converter
+    // n_limit (27-bit), t_limit (32-bit), check_candidate (27-bit)
+    // all driven from the same bin_value since only one mode is active.
+    // =======================================================================
+    wire [WIDTH-1:0] n_limit         = bin_value;
+    wire [31:0]      t_limit         = {5'd0, bin_value};
+    wire [WIDTH-1:0] check_candidate = bin_value;
 
     // =======================================================================
     // PLL: 100 MHz -> 25 MHz (clk_vga), 200 MHz (clk_mem)
@@ -254,11 +358,11 @@ module test_vga_top #(
     mode_fsm #(.WIDTH(WIDTH)) u_fsm (
         .clk                    (clk),
         .rst_n                  (rst_sync_n),
-        .mode_sel               (mode_sel),
+        .mode_sel               (nav_mode_sel),
         .n_limit                (n_limit),
         .t_limit                (t_limit),
         .check_candidate        (check_candidate),
-        .go                     (go_pulse),
+        .go                     (nav_go),
         .eng_plus_start_ff      (eng_plus_start),
         .eng_plus_candidate_ff  (eng_plus_candidate),
         .eng_plus_done          (eng_plus_done),
@@ -335,7 +439,7 @@ module test_vga_top #(
     // Frame renderer (ui_clk domain)
     // Renders text from screen_text_rom via font_rom into DDR2 frame buffer.
     // Writes to the back buffer (~fb_display_ff).
-    // screen_id from BTND counter (0-6, wrapping).
+    // screen_id from keypad_nav.
     // =======================================================================
     wire         fr_wr_req;
     wire [26:0]  fr_wr_addr;
@@ -348,6 +452,9 @@ module test_vga_top #(
         .rst_n               (arb_rst_n),
         .init_calib_complete (init_calib_complete),
         .screen_id           (screen_id_ff),
+        .bcd_digits          (de_bcd_digits),
+        .cursor_pos          (de_cursor_pos),
+        .digit_toggle        (de_toggle),
         .render_buf          (~fb_display_ff),
         .wr_req_ff           (fr_wr_req),
         .wr_addr_ff          (fr_wr_addr),
