@@ -38,9 +38,12 @@ module vga_driver (
     localparam LINE2_Y_START  = 10'd352;  // 22 char heights from top
     localparam LINE12_HEIGHT  = 10'd16;   // normal height for lines 1-2
 
-    // Sprite dimensions
-    localparam [9:0] SPRITE_W    = 10'd192;  // 12 chars x 16 px (2x)
-    localparam [9:0] SPRITE_H    = 10'd32;   // 16 font rows x 2  (2x)
+    // Sprite glyph dimensions (before border expansion)
+    localparam [9:0] GLYPH_W     = 10'd192;  // 12 chars x 16 px (2x)
+    localparam [9:0] GLYPH_H     = 10'd32;   // 16 font rows x 2  (2x)
+    // Expanded bounding box: +1 px border on each side
+    localparam [9:0] SPRITE_W    = GLYPH_W + 10'd2;  // 194
+    localparam [9:0] SPRITE_H    = GLYPH_H + 10'd2;  // 34
     localparam [3:0] SPRITE_CHARS = 4'd12;
 
     // Background color (8-bit RGB332)
@@ -136,11 +139,15 @@ module vga_driver (
     // Next scanline Y (handles frame wrap)
     wire [9:0] y_next = (y_in == 10'd524) ? 10'd0 : y_in + 10'd1;
 
-    // Is the next scanline within the sprite's vertical extent?
+    // Is the next scanline within the expanded sprite box?
     wire next_in_spr_y = (y_next >= sprite_y) && (y_next < sprite_y + SPRITE_H);
 
-    // Font row for the next scanline (2x vertical: divide pixel row by 2)
-    wire [3:0] font_row_next = (y_next - sprite_y) >> 1; // 0-15
+    // Font row for the next scanline (relative to glyph, 2x vertical)
+    // Clamp to valid range: border rows (0 and SPRITE_H-1) use row 0 / row 15
+    wire [9:0] glyph_rel_y = y_next - sprite_y;
+    wire [3:0] font_row_next = (glyph_rel_y <= 10'd0) ? 4'd0
+                             : (glyph_rel_y >= GLYPH_H) ? 4'd15
+                             : (glyph_rel_y - 10'd1) >> 1; // 0-15
 
     // Fetch trigger: first pixel of hblank, sprite enabled, next line in range
     wire fetch_trigger = (x_in == 10'd640) && sprite_en && next_in_spr_y;
@@ -195,15 +202,22 @@ module vga_driver (
     // =========================================================================
     // Sprite compositing — combinational pixel lookup
     // =========================================================================
-    // Sprite bounding box check (current pixel)
+    // Expanded bounding box check (includes 1 px border)
     wire in_spr_x = (x_in >= sprite_x) && (x_in < sprite_x + SPRITE_W);
     wire in_spr_y = (y_in >= sprite_y) && (y_in < sprite_y + SPRITE_H);
     wire in_sprite = sprite_en && glyph_valid_ff && in_spr_x && in_spr_y;
 
-    // Relative coordinates within sprite
-    wire [7:0] spr_rel_x = x_in[7:0] - sprite_x[7:0]; // 0-191 (fits 8 bits)
-    wire [3:0] spr_char_idx  = spr_rel_x[7:4];         // character 0-11
-    wire [2:0] spr_font_col  = spr_rel_x[3:1];         // font pixel 0-7 (2x horiz)
+    // Glyph region (1 px inward from the expanded box edges)
+    wire [9:0] glyph_x0 = sprite_x + 10'd1;
+    wire [9:0] glyph_y0 = sprite_y + 10'd1;
+    wire in_glyph_x = (x_in >= glyph_x0) && (x_in < glyph_x0 + GLYPH_W);
+    wire in_glyph_y = (y_in >= glyph_y0) && (y_in < glyph_y0 + GLYPH_H);
+    wire in_glyph   = in_glyph_x && in_glyph_y;
+
+    // Relative coordinates within glyph (offset by 1 for the border)
+    wire [7:0] spr_rel_x = x_in[7:0] - glyph_x0[7:0]; // 0-191
+    wire [3:0] spr_char_idx  = spr_rel_x[7:4];          // character 0-11
+    wire [2:0] spr_font_col  = spr_rel_x[3:1];          // font pixel 0-7 (2x horiz)
 
     // Look up glyph buffer and select the correct bit
     // font_pixels[7] = leftmost pixel, [0] = rightmost
@@ -271,15 +285,21 @@ module vga_driver (
             vga_b_next = bg_b;
         end
 
-        // --- Sprite underlay (behind framebuffer text lines) ---
-        if (in_sprite && video_on_in && !in_text_line) begin
-            if (spr_fg) begin
-                // Foreground pixel: rainbow color
+        // --- Sprite underlay (behind framebuffer foreground text only) ---
+        // Show sprite through background pixels, even inside text line bands.
+        // Framebuffer text (non-BG pixels) draws on top of the sprite.
+        if (in_sprite && video_on_in) begin
+            // Determine if the framebuffer pixel is foreground text
+            // (in a text line, FIFO not empty, and pixel is not BG_COLOR)
+            if (in_text_line && !fifo_empty && pixel_byte != BG_COLOR) begin
+                // Framebuffer text wins — already assigned above, keep it
+            end else if (in_glyph && spr_fg) begin
+                // Sprite foreground glyph pixel: rainbow color
                 vga_r_next = spr_r;
                 vga_g_next = spr_g;
                 vga_b_next = spr_b;
             end else begin
-                // Background pixel: opaque black box
+                // Border pixel or glyph background: opaque black
                 vga_r_next = bg_r;
                 vga_g_next = bg_g;
                 vga_b_next = bg_b;

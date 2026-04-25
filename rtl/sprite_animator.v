@@ -19,8 +19,8 @@ module sprite_animator #(
     parameter [9:0] SPRITE_H = 10'd32,    // 16 font rows x 2  (2x scale)
     parameter [9:0] SCREEN_W = 10'd640,
     parameter [9:0] SCREEN_H = 10'd480,
-    parameter [9:0] INIT_X   = 10'd224,   // horizontally centered
-    parameter [9:0] INIT_Y   = 10'd224    // vertically centered
+    parameter [9:0] INIT_X   = 10'd200,   // off-diagonal for path coverage
+    parameter [9:0] INIT_Y   = 10'd300
 ) (
     input  wire        clk_vga,
     input  wire        rst,
@@ -46,10 +46,13 @@ module sprite_animator #(
     // -----------------------------------------------------------------------
     // Movement bounds and speeds
     // -----------------------------------------------------------------------
-    localparam [9:0] X_MAX   = SCREEN_W - SPRITE_W;  // 448
-    localparam [9:0] Y_MAX   = SCREEN_H - SPRITE_H;  // 448
-    localparam [9:0] SPEED_X = 10'd2;  // 2 px/frame horizontal
-    localparam [9:0] SPEED_Y = 10'd1;  // 1 px/frame vertical
+    // Expanded bounding box: sprite + 1 px border on each side
+    localparam [9:0] BOX_W   = SPRITE_W + 10'd2;     // 194
+    localparam [9:0] BOX_H   = SPRITE_H + 10'd2;     // 34
+    localparam [9:0] X_MAX   = SCREEN_W - BOX_W - 10'd3; // 443 (prime — breaks 446=446 symmetry)
+    localparam [9:0] Y_MAX   = SCREEN_H - BOX_H;     // 446
+    localparam [9:0] SPEED_X = 10'd1;
+    localparam [9:0] SPEED_Y = 10'd1;
 
     // Direction flags: 0 = positive (right / down), 1 = negative (left / up)
     reg dir_x_ff;
@@ -65,40 +68,28 @@ module sprite_animator #(
 
         // --- X axis ---
         if (dir_x_ff) begin
-            // Moving left
-            if (sprite_x_ff <= SPEED_X) begin
-                next_x     = 10'd0;
-                next_dir_x = 1'b0;       // reverse: go right
-            end else begin
-                next_x = sprite_x_ff - SPEED_X;
-            end
+            if (sprite_x_ff == 10'd0) begin
+                next_x = 10'd1; next_dir_x = 1'b0;
+            end else
+                next_x = sprite_x_ff - 10'd1;
         end else begin
-            // Moving right
-            if (sprite_x_ff >= X_MAX - SPEED_X) begin
-                next_x     = X_MAX;
-                next_dir_x = 1'b1;       // reverse: go left
-            end else begin
-                next_x = sprite_x_ff + SPEED_X;
-            end
+            if (sprite_x_ff == X_MAX) begin
+                next_x = X_MAX - 10'd1; next_dir_x = 1'b1;
+            end else
+                next_x = sprite_x_ff + 10'd1;
         end
 
         // --- Y axis ---
         if (dir_y_ff) begin
-            // Moving up
-            if (sprite_y_ff <= SPEED_Y) begin
-                next_y     = 10'd0;
-                next_dir_y = 1'b0;       // reverse: go down
-            end else begin
-                next_y = sprite_y_ff - SPEED_Y;
-            end
+            if (sprite_y_ff == 10'd0) begin
+                next_y = 10'd1; next_dir_y = 1'b0;
+            end else
+                next_y = sprite_y_ff - 10'd1;
         end else begin
-            // Moving down
-            if (sprite_y_ff >= Y_MAX - SPEED_Y) begin
-                next_y     = Y_MAX;
-                next_dir_y = 1'b1;       // reverse: go up
-            end else begin
-                next_y = sprite_y_ff + SPEED_Y;
-            end
+            if (sprite_y_ff == Y_MAX) begin
+                next_y = Y_MAX - 10'd1; next_dir_y = 1'b1;
+            end else
+                next_y = sprite_y_ff + 10'd1;
         end
     end
 
