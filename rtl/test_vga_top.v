@@ -448,6 +448,31 @@ module test_vga_top #(
     );
 
     // =======================================================================
+    // Double-buffer swap controller (ui_clk domain)
+    // fb_display_ff selects which buffer the VGA reader reads from.
+    // The renderer writes to the OTHER buffer.
+    // After fb_ready (both buffers filled), toggle on every vsync.
+    // =======================================================================
+    reg        fb_display_ff;       // 0 = FB_A, 1 = FB_B
+    reg        vs_meta_top, vs_sync_top, vs_prev_top;
+
+    always @(posedge ui_clk) begin
+        if (ui_clk_sync_rst) begin
+            vs_meta_top  <= 1'b0;
+            vs_sync_top  <= 1'b0;
+            vs_prev_top  <= 1'b0;
+            fb_display_ff <= 1'b0;
+        end else begin
+            vs_meta_top <= vsync;
+            vs_sync_top <= vs_meta_top;
+            vs_prev_top <= vs_sync_top;
+            // Toggle display buffer on vsync rising edge once both buffers ready
+            if (vs_sync_top && !vs_prev_top && fb_ready)
+                fb_display_ff <= ~fb_display_ff;
+        end
+    end
+
+    // =======================================================================
     // VGA Reader (ui_clk domain)
     // =======================================================================
     vga_reader u_vga_reader (
@@ -456,6 +481,7 @@ module test_vga_top #(
         .init_calib_complete (init_calib_complete),
         .enable              (fb_ready),
 
+        .fb_select           (fb_display_ff),
         .vsync_vga           (vsync),
 
         .vga_rd_req_ff       (vga_rd_req),

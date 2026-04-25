@@ -4,13 +4,14 @@
 // After init_calib_complete, writes WORD_COUNT 128-bit words of all-white
 // pixels (0xFF = RGB332 white) to DDR2 starting at FB_BASE, using the
 // arbiter's render write port (port 1).
+// Fills both double-buffer regions (FB_A and FB_B are contiguous).
 // Asserts done_ff when finished — gate vga_reader on this signal.
 //
 // Clock domain: ui_clk (same as arbiter).
 
 module fb_test_writer #(
     parameter [26:0] FB_BASE    = 27'h050_0000,
-    parameter [12:0] WORD_COUNT = 13'd2560       // (32+16+16) lines x 40 words
+    parameter [12:0] WORD_COUNT = 13'd5120       // 2 buffers x (32+16+16) lines x 40 words
 ) (
     input  wire        ui_clk,
     input  wire        rst_n,

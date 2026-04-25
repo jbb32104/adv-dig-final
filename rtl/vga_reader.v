@@ -3,10 +3,14 @@
 // VGA frame-buffer reader — fetches pre-rendered pixel data from DDR2
 // through the mem_arbiter VGA read port and pushes it into pixel_fifo.
 //
+// Double-buffered: fb_select chooses FB_A or FB_B. The select is latched
+// on the vsync rising edge so the reader uses a consistent buffer for
+// the entire frame.
+//
 // Clock domain: ui_clk (~75 MHz, same as arbiter).
 // vsync from the VGA controller (clk_vga domain) is CDC'd internally.
 //
-// Frame buffer layout (contiguous 128-bit words starting at FB_BASE):
+// Frame buffer layout (contiguous 128-bit words starting at FB_A/FB_B):
 //   Line 0: LINE0_HEIGHT scanlines x WORDS_PER_SCANLINE words
 //   Line 1: LINE12_HEIGHT scanlines x WORDS_PER_SCANLINE words
 //   Line 2: LINE12_HEIGHT scanlines x WORDS_PER_SCANLINE words
@@ -22,7 +26,8 @@
 //   issuing the next request.
 
 module vga_reader #(
-    parameter [26:0] FB_BASE           = 27'h050_0000,
+    parameter [26:0] FB_A              = 27'h050_0000,
+    parameter [26:0] FB_B              = 27'h050_A000,
     parameter [5:0]  WORDS_PER_SCANLINE = 6'd40,     // 640 px / 16 px per word
     parameter [5:0]  LINE0_HEIGHT      = 6'd32,
     parameter [5:0]  LINE12_HEIGHT     = 6'd16
@@ -31,6 +36,9 @@ module vga_reader #(
     input  wire        rst_n,
     input  wire        init_calib_complete,
     input  wire        enable,              // gate: wait for FB to be filled
+
+    // Double-buffer select (ui_clk domain): 0 = FB_A, 1 = FB_B
+    input  wire        fb_select,
 
     // vsync from VGA controller (clk_vga domain — CDC'd internally)
     input  wire        vsync_vga,
@@ -69,6 +77,12 @@ module vga_reader #(
     wire vs_rising = vs_sync_ff && !vs_prev_ff;
 
     // -----------------------------------------------------------------------
+    // Latch fb_select on vsync so the buffer base is stable for the frame
+    // -----------------------------------------------------------------------
+    reg        fb_sel_latched_ff;
+    wire [26:0] frame_base = fb_sel_latched_ff ? FB_B : FB_A;
+
+    // -----------------------------------------------------------------------
     // FSM
     // -----------------------------------------------------------------------
     localparam [1:0] S_WAIT_VS = 2'd0,   // wait for vsync to reset pointer
@@ -89,11 +103,12 @@ module vga_reader #(
     // -----------------------------------------------------------------------
     always @(posedge ui_clk) begin
         if (!rst_n) begin
-            state_ff       <= S_WAIT_VS;
-            word_cnt_ff    <= 13'd0;
-            rd_addr_ff     <= FB_BASE;
-            vga_rd_req_ff  <= 1'b0;
-            vga_rd_addr_ff <= FB_BASE;
+            state_ff          <= S_WAIT_VS;
+            word_cnt_ff       <= 13'd0;
+            rd_addr_ff        <= FB_A;
+            vga_rd_req_ff     <= 1'b0;
+            vga_rd_addr_ff    <= FB_A;
+            fb_sel_latched_ff <= 1'b0;
         end else begin
             case (state_ff)
 
@@ -101,9 +116,10 @@ module vga_reader #(
                 S_WAIT_VS: begin
                     vga_rd_req_ff <= 1'b0;
                     if (vs_rising) begin
-                        word_cnt_ff <= 13'd0;
-                        rd_addr_ff  <= FB_BASE;
-                        state_ff    <= S_IDLE;
+                        fb_sel_latched_ff <= fb_select;  // latch buffer choice
+                        word_cnt_ff       <= 13'd0;
+                        rd_addr_ff        <= fb_select ? FB_B : FB_A;
+                        state_ff          <= S_IDLE;
                     end
                 end
 
