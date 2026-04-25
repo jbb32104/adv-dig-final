@@ -33,80 +33,47 @@ module sprite_animator #(
 );
 
     // -----------------------------------------------------------------------
-    // Vsync rising-edge detect
-    // -----------------------------------------------------------------------
-    reg vs_prev_ff;
-    wire vs_rising = vsync && !vs_prev_ff;
-
-    always @(posedge clk_vga) begin
-        if (rst) vs_prev_ff <= 1'b0;
-        else     vs_prev_ff <= vsync;
-    end
-
-    // -----------------------------------------------------------------------
-    // Movement bounds and speeds
+    // Movement bounds
     // -----------------------------------------------------------------------
     // Expanded bounding box: sprite + 1 px border on each side
     localparam [9:0] BOX_W   = SPRITE_W + 10'd2;     // 194
     localparam [9:0] BOX_H   = SPRITE_H + 10'd2;     // 34
     localparam [9:0] X_MAX   = SCREEN_W - BOX_W - 10'd3; // 443 (prime — breaks 446=446 symmetry)
     localparam [9:0] Y_MAX   = SCREEN_H - BOX_H;     // 446
-    localparam [9:0] SPEED_X = 10'd1;
-    localparam [9:0] SPEED_Y = 10'd1;
 
-    // Direction flags: 0 = positive (right / down), 1 = negative (left / up)
-    reg dir_x_ff;
-    reg dir_y_ff;
+    // -----------------------------------------------------------------------
+    // Registered state
+    // -----------------------------------------------------------------------
+    reg        vs_prev_ff;
+    reg        dir_x_ff;
+    reg        dir_y_ff;
+    reg [7:0]  hue_ff;
 
-    // Next position and direction (combinational, with boundary clamping)
-    reg [9:0] next_x, next_y;
-    reg       next_dir_x, next_dir_y;
-
-    always @(*) begin
-        next_dir_x = dir_x_ff;
-        next_dir_y = dir_y_ff;
-
-        // --- X axis ---
-        if (dir_x_ff) begin
-            if (sprite_x_ff == 10'd0) begin
-                next_x = 10'd1; next_dir_x = 1'b0;
-            end else
-                next_x = sprite_x_ff - 10'd1;
-        end else begin
-            if (sprite_x_ff == X_MAX) begin
-                next_x = X_MAX - 10'd1; next_dir_x = 1'b1;
-            end else
-                next_x = sprite_x_ff + 10'd1;
-        end
-
-        // --- Y axis ---
-        if (dir_y_ff) begin
-            if (sprite_y_ff == 10'd0) begin
-                next_y = 10'd1; next_dir_y = 1'b0;
-            end else
-                next_y = sprite_y_ff - 10'd1;
-        end else begin
-            if (sprite_y_ff == Y_MAX) begin
-                next_y = Y_MAX - 10'd1; next_dir_y = 1'b1;
-            end else
-                next_y = sprite_y_ff + 10'd1;
-        end
-    end
+    // -----------------------------------------------------------------------
+    // Combinational next-state signals
+    // -----------------------------------------------------------------------
+    reg        vs_prev_next;
+    reg        vs_rising;
+    reg [9:0]  sprite_x_next;
+    reg [9:0]  sprite_y_next;
+    reg        dir_x_next;
+    reg        dir_y_next;
+    reg [7:0]  hue_next;
+    reg [7:0]  sprite_color_next;
 
     // -----------------------------------------------------------------------
     // Rainbow color — 6-sector HSV at full saturation / value
     //   192 steps total  (32 per sector)
     //   R,G: 3-bit (0-7),  B: 2-bit (0-3)
     // -----------------------------------------------------------------------
-    reg [7:0] hue_ff;           // 0-191, wrapping
-
-    wire [4:0] hue_step = hue_ff[4:0];   // 0-31 within current sector
-
+    reg [4:0] hue_step;
     reg [2:0] color_r;
     reg [2:0] color_g;
     reg [1:0] color_b;
 
     always @(*) begin
+        hue_step = hue_ff[4:0];
+
         if (hue_ff < 8'd32) begin              // Sector 0: Red -> Yellow
             color_r = 3'd7;
             color_g = hue_step[4:2];
@@ -135,27 +102,85 @@ module sprite_animator #(
     end
 
     // -----------------------------------------------------------------------
-    // Sequential update — once per frame
+    // Combinational next-state logic (including reset)
+    // -----------------------------------------------------------------------
+    always @(*) begin
+        if (rst) begin
+            vs_prev_next      = 1'b0;
+            sprite_x_next     = INIT_X;
+            sprite_y_next     = INIT_Y;
+            dir_x_next        = 1'b1;           // initial: left
+            dir_y_next        = 1'b1;           // initial: up
+            hue_next          = 8'd0;
+            sprite_color_next = 8'hE0;          // start red
+        end else begin
+            // Vsync rising-edge detect
+            vs_rising = vsync && !vs_prev_ff;
+            vs_prev_next = vsync;
+
+            // Default: hold all registers
+            sprite_x_next     = sprite_x_ff;
+            sprite_y_next     = sprite_y_ff;
+            dir_x_next        = dir_x_ff;
+            dir_y_next        = dir_y_ff;
+            hue_next          = hue_ff;
+            sprite_color_next = sprite_color_ff;
+
+            if (vs_rising && enable) begin
+                // --- X axis ---
+                dir_x_next = dir_x_ff;
+                if (dir_x_ff) begin
+                    if (sprite_x_ff == 10'd0) begin
+                        sprite_x_next = 10'd1;
+                        dir_x_next    = 1'b0;
+                    end else begin
+                        sprite_x_next = sprite_x_ff - 10'd1;
+                    end
+                end else begin
+                    if (sprite_x_ff == X_MAX) begin
+                        sprite_x_next = X_MAX - 10'd1;
+                        dir_x_next    = 1'b1;
+                    end else begin
+                        sprite_x_next = sprite_x_ff + 10'd1;
+                    end
+                end
+
+                // --- Y axis ---
+                dir_y_next = dir_y_ff;
+                if (dir_y_ff) begin
+                    if (sprite_y_ff == 10'd0) begin
+                        sprite_y_next = 10'd1;
+                        dir_y_next    = 1'b0;
+                    end else begin
+                        sprite_y_next = sprite_y_ff - 10'd1;
+                    end
+                end else begin
+                    if (sprite_y_ff == Y_MAX) begin
+                        sprite_y_next = Y_MAX - 10'd1;
+                        dir_y_next    = 1'b1;
+                    end else begin
+                        sprite_y_next = sprite_y_ff + 10'd1;
+                    end
+                end
+
+                // --- Color ---
+                hue_next          = (hue_ff == 8'd191) ? 8'd0 : hue_ff + 8'd1;
+                sprite_color_next = {color_r, color_g, color_b};
+            end
+        end
+    end
+
+    // -----------------------------------------------------------------------
+    // Sequential block — flops only
     // -----------------------------------------------------------------------
     always @(posedge clk_vga) begin
-        if (rst) begin
-            sprite_x_ff     <= INIT_X;
-            sprite_y_ff     <= INIT_Y;
-            dir_x_ff        <= 1'b1;           // initial: left
-            dir_y_ff        <= 1'b1;           // initial: up
-            hue_ff          <= 8'd0;
-            sprite_color_ff <= 8'hE0;          // start red
-        end else if (vs_rising && enable) begin
-            // --- Position & direction ---
-            sprite_x_ff <= next_x;
-            sprite_y_ff <= next_y;
-            dir_x_ff    <= next_dir_x;
-            dir_y_ff    <= next_dir_y;
-
-            // --- Color ---
-            hue_ff <= (hue_ff == 8'd191) ? 8'd0 : hue_ff + 8'd1;
-            sprite_color_ff <= {color_r, color_g, color_b};
-        end
+        vs_prev_ff      <= vs_prev_next;
+        sprite_x_ff     <= sprite_x_next;
+        sprite_y_ff     <= sprite_y_next;
+        dir_x_ff        <= dir_x_next;
+        dir_y_ff        <= dir_y_next;
+        hue_ff          <= hue_next;
+        sprite_color_ff <= sprite_color_next;
     end
 
 endmodule
