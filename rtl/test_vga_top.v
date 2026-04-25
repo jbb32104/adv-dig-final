@@ -6,7 +6,7 @@
 //   Port 2: Prime plus      — 6k+1 bitmap writes from accumulator FIFO
 //   Port 3: Prime minus     — 6k-1 bitmap writes from accumulator FIFO
 //
-// screen_id for the frame renderer is sourced from SW[14:12] for testing.
+// screen_id cycles 0-6 on BTND press (debounced).
 // Double-buffer swap is edge-triggered on render_done (no partial frames).
 //
 // Clock domains:
@@ -34,6 +34,7 @@ module test_vga_top #(
     input  wire        BTNC,
     input  wire        BTNR,
     input  wire        BTNL,
+    input  wire        BTND,
 
     output wire [15:0] LED,
     output wire [6:0]  SEG,
@@ -98,6 +99,21 @@ module test_vga_top #(
         .clk(clk), .rst_n(rst_sync_n), .btn_in(BTNL),
         .btn_state_ff(), .rising_pulse_ff(btnl_pulse), .falling_pulse_ff()
     );
+
+    wire btnd_pulse;
+    debounce #(.DEBOUNCE_CYCLES(500_000)) u_dbnc_btnd (
+        .clk(clk), .rst_n(rst_sync_n), .btn_in(BTND),
+        .btn_state_ff(), .rising_pulse_ff(btnd_pulse), .falling_pulse_ff()
+    );
+
+    // Screen ID counter: cycles 0 -> 1 -> ... -> 6 -> 0 on BTND press
+    reg [2:0] screen_id_ff;
+    always @(posedge clk) begin
+        if (!rst_sync_n)
+            screen_id_ff <= 3'd0;
+        else if (btnd_pulse)
+            screen_id_ff <= (screen_id_ff == 3'd6) ? 3'd0 : screen_id_ff + 3'd1;
+    end
 
     // =======================================================================
     // PLL: 100 MHz -> 25 MHz (clk_vga), 200 MHz (clk_mem)
@@ -309,7 +325,7 @@ module test_vga_top #(
     // Frame renderer (ui_clk domain)
     // Renders text from screen_text_rom via font_rom into DDR2 frame buffer.
     // Writes to the back buffer (~fb_display_ff).
-    // screen_id from SW[14:12] for testing (replace with mode_fsm later).
+    // screen_id from BTND counter (0-6, wrapping).
     // =======================================================================
     wire         fr_wr_req;
     wire [26:0]  fr_wr_addr;
@@ -321,7 +337,7 @@ module test_vga_top #(
         .ui_clk              (ui_clk),
         .rst_n               (arb_rst_n),
         .init_calib_complete (init_calib_complete),
-        .screen_id           (SW[14:12]),
+        .screen_id           (screen_id_ff),
         .render_buf          (~fb_display_ff),
         .wr_req_ff           (fr_wr_req),
         .wr_addr_ff          (fr_wr_addr),
