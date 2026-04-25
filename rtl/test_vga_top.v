@@ -211,13 +211,73 @@ module test_vga_top #(
     );
 
     // =======================================================================
-    // Input interpretation — from keypad BCD-to-binary converter
+    // Input interpretation �� from keypad BCD-to-binary converter
     // n_limit (27-bit), t_limit (32-bit), check_candidate (27-bit)
     // all driven from the same bin_value since only one mode is active.
     // =======================================================================
     wire [WIDTH-1:0] n_limit         = bin_value;
     wire [31:0]      t_limit         = {5'd0, bin_value};
     wire [WIDTH-1:0] check_candidate = bin_value;
+
+    // =======================================================================
+    // Latched input BCD — captured on nav_go (before digit_entry resets)
+    // Held constant while on loading/results screen for display.
+    // =======================================================================
+    reg [31:0] latched_bcd_ff;
+    always @(posedge clk) begin
+        if (~rst_sync_n)
+            latched_bcd_ff <= 32'd0;
+        else if (nav_go)
+            latched_bcd_ff <= de_bcd_digits;
+    end
+
+    // =======================================================================
+    // Prime count total — sum of both engines plus 2 (for primes 2 and 3)
+    // Converted to BCD for live display on loading screen.
+    // =======================================================================
+    wire [31:0] prime_total = prime_count_plus + prime_count_minus + 32'd2;
+
+    wire [31:0] count_bcd;
+    wire        count_bcd_valid;
+    wire        count_bcd_toggle;
+
+    // Auto-restart: start on nav_go, re-start on each valid while on loading
+    wire is_loading_scr = (screen_id_ff == 3'd5) || (screen_id_ff == 3'd7);
+    wire count_bcd_start = nav_go ||
+                           (count_bcd_valid && is_loading_scr);
+
+    bin_to_bcd u_count_bcd (
+        .clk       (clk),
+        .rst       (~rst_sync_n),
+        .bin_in    (prime_total[26:0]),
+        .start     (count_bcd_start),
+        .bcd_out_ff(count_bcd),
+        .valid_ff  (count_bcd_valid),
+        .toggle_ff (count_bcd_toggle)
+    );
+
+    // =======================================================================
+    // Countdown timer — remaining seconds for time mode display
+    // Clamped to 0 when seconds exceeds t_limit.
+    // =======================================================================
+    wire [31:0] remaining_time = (t_limit_out > seconds) ? (t_limit_out - seconds) : 32'd0;
+
+    wire [31:0] countdown_bcd;
+    wire        countdown_bcd_valid;
+
+    // Auto-restart loop while on time-loading screen (screen 7)
+    wire countdown_bcd_start = nav_go ||
+                               (countdown_bcd_valid && screen_id_ff == 3'd7);
+
+    bin_to_bcd u_countdown_bcd (
+        .clk       (clk),
+        .rst       (~rst_sync_n),
+        .bin_in    (remaining_time[26:0]),
+        .start     (countdown_bcd_start),
+        .bcd_out_ff(countdown_bcd),
+        .valid_ff  (countdown_bcd_valid),
+        .toggle_ff ()   // not needed — prime_dirty drives re-renders
+    );
 
     // =======================================================================
     // PLL: 100 MHz -> 25 MHz (clk_vga), 200 MHz (clk_mem)
@@ -336,8 +396,10 @@ module test_vga_top #(
     // =======================================================================
     // elapsed_timer wires
     // =======================================================================
+    wire        timer_restart;
     wire        timer_freeze;
     wire [31:0] seconds, cycle_count;
+    wire [31:0] t_limit_out;
 
     // =======================================================================
     // mode_fsm status wires
@@ -383,12 +445,14 @@ module test_vga_top #(
         .acc_minus_flush_ff     (acc_minus_flush),
         .acc_minus_flush_done   (acc_minus_flush_done),
         .acc_minus_fifo_full    (acc_minus_fifo_full),
+        .timer_restart_ff       (timer_restart),
         .timer_freeze_ff        (timer_freeze),
         .seconds_ff             (seconds),
         .cycle_count_ff         (cycle_count),
         .done_ff                (done),
         .is_prime_result_ff     (is_prime_result),
-        .state_out_ff           (state_out)
+        .state_out_ff           (state_out),
+        .t_limit_out            (t_limit_out)
     );
 
     // =======================================================================
@@ -431,7 +495,7 @@ module test_vga_top #(
     // elapsed_timer (clk domain)
     // =======================================================================
     elapsed_timer #(.TICK_PERIOD(100_000_000)) u_timer (
-        .clk(clk), .rst_n(rst_sync_n), .freeze(timer_freeze),
+        .clk(clk), .rst_n(rst_sync_n), .restart(timer_restart), .freeze(timer_freeze),
         .cycle_count_ff(cycle_count), .seconds_ff(seconds), .second_tick_ff()
     );
 
@@ -455,6 +519,10 @@ module test_vga_top #(
         .bcd_digits          (de_bcd_digits),
         .cursor_pos          (de_cursor_pos),
         .digit_toggle        (de_toggle),
+        .prime_bcd           (count_bcd),
+        .prime_bcd_toggle    (count_bcd_toggle),
+        .input_bcd           (latched_bcd_ff),
+        .countdown_bcd       (countdown_bcd),
         .render_buf          (~fb_display_ff),
         .wr_req_ff           (fr_wr_req),
         .wr_addr_ff          (fr_wr_addr),

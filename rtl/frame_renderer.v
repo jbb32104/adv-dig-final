@@ -38,6 +38,12 @@ module frame_renderer #(
     input  wire [3:0]  cursor_pos,    // active cursor digit index (0-7)
     input  wire        digit_toggle,  // flips on each digit change (edge-detect trigger)
 
+    // Loading screen live data (clk domain — CDC'd internally)
+    input  wire [31:0] prime_bcd,       // prime count total in BCD (8 digits)
+    input  wire        prime_bcd_toggle, // flips on each new BCD conversion
+    input  wire [31:0] input_bcd,       // latched user input in BCD (8 digits)
+    input  wire [31:0] countdown_bcd,   // remaining seconds in BCD (4 digits, time mode)
+
     // Which buffer to write: 0 = FB_A, 1 = FB_B
     input  wire        render_buf,
 
@@ -69,6 +75,13 @@ module frame_renderer #(
     reg        dtog_meta_ff, dtog_sync_ff;
     reg        dtog_rendered_ff;  // toggle value at last render start
 
+    // Loading screen CDC
+    reg [31:0] pbcd_meta_ff, pbcd_sync_ff;   // prime count BCD
+    reg        ptog_meta_ff, ptog_sync_ff;    // prime BCD toggle
+    reg        ptog_rendered_ff;              // toggle value at last render start
+    reg [31:0] ibcd_meta_ff, ibcd_sync_ff;   // input BCD (latched)
+    reg [31:0] cbcd_meta_ff, cbcd_sync_ff;   // countdown BCD (time mode)
+
     always @(posedge ui_clk) begin
         bcd_meta_ff  <= bcd_digits;
         bcd_sync_ff  <= bcd_meta_ff;
@@ -76,12 +89,24 @@ module frame_renderer #(
         cur_sync_ff  <= cur_meta_ff;
         dtog_meta_ff <= digit_toggle;
         dtog_sync_ff <= dtog_meta_ff;
+        pbcd_meta_ff <= prime_bcd;
+        pbcd_sync_ff <= pbcd_meta_ff;
+        ptog_meta_ff <= prime_bcd_toggle;
+        ptog_sync_ff <= ptog_meta_ff;
+        ibcd_meta_ff <= input_bcd;
+        ibcd_sync_ff <= ibcd_meta_ff;
+        cbcd_meta_ff <= countdown_bcd;
+        cbcd_sync_ff <= cbcd_meta_ff;
     end
 
     // digit_dirty: true when digits changed since last render started.
     // Cannot be missed even if renderer is busy — compares current toggle
     // to the value latched at render start.
     wire digit_dirty = (dtog_sync_ff != dtog_rendered_ff);
+
+    // prime_dirty: true when prime count BCD changed since last render.
+    // Drives continuous re-render on loading screen.
+    wire prime_dirty = (ptog_sync_ff != ptog_rendered_ff);
 
     // -----------------------------------------------------------------------
     // Internal ROM instances (clocked on ui_clk)
@@ -154,6 +179,7 @@ module frame_renderer #(
     reg         cursor_a_next;
     reg         cursor_b_next;
     reg         dtog_rendered_next;
+    reg         ptog_rendered_next;
     reg         wr_req_next;
     reg [26:0]  wr_addr_next;
     reg [127:0] wr_data_next;
@@ -175,6 +201,9 @@ module frame_renderer #(
 
     // Per-character foreground color (white normally, red for cursor digit)
     reg [7:0]   fg_a, fg_b;
+
+    // Active BCD bus (selected per screen/line)
+    reg [31:0]  active_bcd;
 
     // -----------------------------------------------------------------------
     // Digit position lookup — maps (screen_id, char_pos) to digit index.
@@ -223,10 +252,18 @@ module frame_renderer #(
         endcase
     endfunction
 
-    // Is a given screen one with dynamic digit entry on line 1?
-    wire is_digit_screen = (render_sid_ff == 3'd1) ||
-                           (render_sid_ff == 3'd2) ||
-                           (render_sid_ff == 3'd3);
+    // Screens with dynamic digit display
+    wire is_entry_screen   = (render_sid_ff == 3'd1) ||
+                             (render_sid_ff == 3'd2) ||
+                             (render_sid_ff == 3'd3);
+    wire is_loading_screen = (render_sid_ff == 3'd5) || (render_sid_ff == 3'd7);
+    wire is_time_loading   = (render_sid_ff == 3'd7);
+
+    // Which lines have dynamic digits?
+    //   Entry screens (1-3): line 1 only
+    //   Loading screen (5):  lines 1 and 2
+    wire line_has_digits = (is_entry_screen && line_idx_ff == 2'd1) ||
+                           (is_loading_screen && (line_idx_ff == 2'd1 || line_idx_ff == 2'd2));
 
     always @(*) begin
         is_line0 = (line_idx_ff == 2'd0);
@@ -246,7 +283,9 @@ module frame_renderer #(
         char_b_pos  = {word_off_12[3:0], 1'b1};
 
         // Digit position lookup for char A and char B
-        if (render_sid_ff == 3'd2) begin
+        // Screen 2 uses 4-digit layout; screen 7 line 2 uses 4-digit layout;
+        // all others use 8-digit layout.
+        if (render_sid_ff == 3'd2 || (is_time_loading && line_idx_ff == 2'd2)) begin
             dig_idx_a = idx4(char_a_pos);
             dig_idx_b = idx4(char_b_pos);
         end else begin
@@ -254,11 +293,25 @@ module frame_renderer #(
             dig_idx_b = idx8(char_b_pos);
         end
 
-        dig_en_a = is_digit_screen && (line_idx_ff == 2'd1) && (dig_idx_a != 4'hF);
-        dig_en_b = is_digit_screen && (line_idx_ff == 2'd1) && (dig_idx_b != 4'hF);
+        dig_en_a = (is_entry_screen || is_loading_screen) && line_has_digits && (dig_idx_a != 4'hF);
+        dig_en_b = (is_entry_screen || is_loading_screen) && line_has_digits && (dig_idx_b != 4'hF);
 
-        dig_val_a = bcd_val(bcd_sync_ff, dig_idx_a);
-        dig_val_b = bcd_val(bcd_sync_ff, dig_idx_b);
+        // Select BCD source per screen/line:
+        //   Loading screens line 1: prime count BCD
+        //   Screen 5 line 2: latched input BCD (n_limit display)
+        //   Screen 7 line 2: countdown BCD (remaining seconds)
+        //   Entry screens line 1: digit_entry BCD
+        if (is_loading_screen && line_idx_ff == 2'd1)
+            active_bcd = pbcd_sync_ff;
+        else if (is_time_loading && line_idx_ff == 2'd2)
+            active_bcd = cbcd_sync_ff;
+        else if (is_loading_screen && line_idx_ff == 2'd2)
+            active_bcd = ibcd_sync_ff;
+        else
+            active_bcd = bcd_sync_ff;
+
+        dig_val_a = bcd_val(active_bcd, dig_idx_a);
+        dig_val_b = bcd_val(active_bcd, dig_idx_b);
 
         // Background word: 16 pixels of BG_COLOR
         bg_word = {16{BG_COLOR}};
@@ -300,9 +353,9 @@ module frame_renderer #(
             font_pixels[0] ? fg_b : BG_COLOR
         };
 
-        // Trigger: screen_id changed, first render, or digits changed
+        // Trigger: screen_id changed, first render, digits changed, or prime count changed
         trigger = init_calib_complete &&
-                  (first_ff || (sid_sync_ff != sid_prev_ff) || digit_dirty);
+                  (first_ff || (sid_sync_ff != sid_prev_ff) || digit_dirty || prime_dirty);
     end
 
     // -----------------------------------------------------------------------
@@ -368,6 +421,7 @@ module frame_renderer #(
             cursor_a_next       = 1'b0;
             cursor_b_next       = 1'b0;
             dtog_rendered_next  = 1'b0;
+            ptog_rendered_next  = 1'b0;
             wr_req_next         = 1'b0;
             wr_addr_next        = 27'd0;
             wr_data_next        = 128'd0;
@@ -387,6 +441,7 @@ module frame_renderer #(
         cursor_a_next       = cursor_a_ff;
         cursor_b_next       = cursor_b_ff;
         dtog_rendered_next  = dtog_rendered_ff;
+        ptog_rendered_next  = ptog_rendered_ff;
         wr_req_next         = wr_req_ff;
         wr_addr_next        = wr_addr_ff;
         wr_data_next        = wr_data_ff;
@@ -405,7 +460,8 @@ module frame_renderer #(
             S_SETUP: begin
                 render_sid_next    = sid_sync_ff;
                 sid_prev_next      = sid_sync_ff;
-                dtog_rendered_next = dtog_sync_ff;   // mark toggle as consumed
+                dtog_rendered_next = dtog_sync_ff;   // mark digit toggle as consumed
+                ptog_rendered_next = ptog_sync_ff;   // mark prime toggle as consumed
                 first_next         = 1'b0;
                 addr_next          = render_buf ? FB_B : FB_A;
                 line_idx_next   = 2'd0;
@@ -426,10 +482,10 @@ module frame_renderer #(
             end
 
             S_TEXT_ROM_A: begin
-                // Latch cursor flag for char A
-                cursor_a_next = dig_en_a && (dig_idx_a == cur_sync_ff);
+                // Latch cursor flag for char A (entry screens only, not loading)
+                cursor_a_next = dig_en_a && is_entry_screen && (dig_idx_a == cur_sync_ff);
                 // Pre-compute cursor flag for char B
-                cursor_b_next = dig_en_b && (dig_idx_b == cur_sync_ff);
+                cursor_b_next = dig_en_b && is_entry_screen && (dig_idx_b == cur_sync_ff);
                 state_next = S_FONT_ROM_A;
             end
 
@@ -512,6 +568,7 @@ module frame_renderer #(
         cursor_a_ff       <= cursor_a_next;
         cursor_b_ff       <= cursor_b_next;
         dtog_rendered_ff  <= dtog_rendered_next;
+        ptog_rendered_ff  <= ptog_rendered_next;
         wr_req_ff         <= wr_req_next;
         wr_addr_ff     <= wr_addr_next;
         wr_data_ff     <= wr_data_next;

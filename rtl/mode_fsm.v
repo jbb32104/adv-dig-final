@@ -54,13 +54,15 @@ module mode_fsm #(
     input  wire             acc_minus_flush_done,
     input  wire             acc_minus_fifo_full,
     // elapsed_timer interface
+    output reg              timer_restart_ff,
     output reg              timer_freeze_ff,
     input  wire [31:0]      seconds_ff,
     input  wire [31:0]      cycle_count_ff,
     // Status outputs
     output reg              done_ff,
     output reg              is_prime_result_ff,
-    output reg  [3:0]       state_out_ff
+    output reg  [3:0]       state_out_ff,
+    output wire [31:0]      t_limit_out
 );
 
     // State encoding (4-bit, 10 states)
@@ -95,6 +97,9 @@ module mode_fsm #(
     reg [WIDTH-1:0] isprime_candidate_ff;
     reg             isprime_waiting_ff;
 
+    // Expose latched t_limit for countdown display
+    assign t_limit_out = t_limit_ff;
+
     // Flush tracking
     reg             flush_sent_ff;      // 1 after flush pulsed to both accumulators
 
@@ -123,6 +128,7 @@ module mode_fsm #(
     reg             next_acc_minus_valid;
     reg             next_acc_minus_is_prime;
     reg             next_acc_minus_flush;
+    reg             next_timer_restart;
     reg             next_timer_freeze;
     reg             next_done;
     reg             next_is_prime_result;
@@ -155,6 +161,7 @@ module mode_fsm #(
         next_done              = done_ff;
         next_is_prime_result   = is_prime_result_ff;
         // Pulse signals default to 0
+        next_timer_restart     = 1'b0;
         next_eng_plus_start    = 1'b0;
         next_eng_minus_start   = 1'b0;
         next_acc_plus_valid    = 1'b0;
@@ -181,6 +188,7 @@ module mode_fsm #(
             next_flush_sent          = 1'b0;
             next_eng_plus_candidate  = {WIDTH{1'b0}};
             next_eng_minus_candidate = {WIDTH{1'b0}};
+            next_timer_restart       = 1'b0;
             next_timer_freeze        = 1'b0;
             next_done                = 1'b0;
             next_is_prime_result     = 1'b0;
@@ -195,6 +203,9 @@ module mode_fsm #(
                 end
 
                 MODE_SELECT: begin
+                    // Restart timer here (1 cycle before *_ENTRY) so seconds_ff
+                    // is guaranteed to be 0 by the time PRIME_RUN evaluates it.
+                    next_timer_restart = 1'b1;
                     case (mode_sel_ff)
                         2'd1: begin
                             next_n_limit = n_limit;
@@ -401,6 +412,7 @@ module mode_fsm #(
         acc_minus_valid_ff     <= next_acc_minus_valid;
         acc_minus_is_prime_ff  <= next_acc_minus_is_prime;
         acc_minus_flush_ff     <= next_acc_minus_flush;
+        timer_restart_ff       <= next_timer_restart;
         timer_freeze_ff        <= next_timer_freeze;
         done_ff                <= next_done;
         is_prime_result_ff     <= next_is_prime_result;
