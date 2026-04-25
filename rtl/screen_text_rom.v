@@ -19,7 +19,12 @@ module screen_text_rom (
         char_code_ff <= rom[addr];
     end
 
+    integer i;
     initial begin
+        // Explicitly zero every entry so Vivado generates complete BRAM init
+        // data.  Relying on implicit zero-init can leave gaps in the bitstream.
+        for (i = 0; i < 1024; i = i + 1) rom[i] = 8'h00;
+
         // ======================================================
         // Screen 0, Line 0: "    PRIME FINDER    "
         // ======================================================

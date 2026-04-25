@@ -1,13 +1,13 @@
 // test_vga_top.v — Combined VGA + prime engine test top for Nexys A7.
 //
 // Exercises all four arbiter ports simultaneously:
-//   Port 0: VGA reader     — DDR2 reads into pixel_fifo (highest priority)
-//   Port 1: FB test writer — one-shot fill of frame buffer with white pixels
-//   Port 2: Prime plus     — 6k+1 bitmap writes from accumulator FIFO
-//   Port 3: Prime minus    — 6k-1 bitmap writes from accumulator FIFO
+//   Port 0: VGA reader      — DDR2 reads into pixel_fifo (highest priority)
+//   Port 1: Frame renderer  — text-to-pixel rendering into DDR2 frame buffer
+//   Port 2: Prime plus      — 6k+1 bitmap writes from accumulator FIFO
+//   Port 3: Prime minus     — 6k-1 bitmap writes from accumulator FIFO
 //
-// The test goal: confirm VGA stays solid (no magenta underrun) while
-// prime engines are generating heavy write traffic on ports 2-3.
+// screen_id for the frame renderer is sourced from SW[14:12] for testing.
+// Double-buffer swap is edge-triggered on render_done (no partial frames).
 //
 // Clock domains:
 //   clk      (100 MHz) — engines, accumulators (write side), mode_fsm, SSD
@@ -15,15 +15,15 @@
 //   clk_mem  (200 MHz) — MIG reference clock
 //   ui_clk   (~75 MHz) — arbiter, accumulators (read side), DDR2, VGA reader
 //
-// LED debug:
-//   LED[0]  init_calib_complete    LED[8]  wr activity 6k+1 (toggle)
-//   LED[1]  fb_ready               LED[9]  wr activity 6k-1 (toggle)
-//   LED[2]  pixel_fifo empty       LED[10] mode_fsm running
-//   LED[3]  pixel_fifo full        LED[11] PLL locked
-//   LED[4]  eng_plus busy          LED[12] (unused)
-//   LED[5]  eng_minus busy         LED[13] (unused)
-//   LED[6]  plus FIFO empty        LED[14] ui_clk heartbeat
-//   LED[7]  minus FIFO empty       LED[15] clk_vga heartbeat
+// LED debug (all focused on VGA/renderer integration):
+//   LED[0]  init_calib_complete    LED[8]  pixel_fifo empty
+//   LED[1]  pll_locked             LED[9]  pixel_fifo full
+//   LED[2]  render_done            LED[10] render wr req (stuck=stall)
+//   LED[3]  vga_enable (latched)   LED[11] VGA rd req (stuck=stall)
+//   LED[4]  swap_pending           LED[12] vsync (CDC'd, frame pulse)
+//   LED[5]  fb_display (0=A,1=B)  LED[13] video_on (active display)
+//   LED[6]  render wr activity     LED[14] ui_clk heartbeat
+//   LED[7]  VGA rd activity        LED[15] clk_vga heartbeat
 
 module test_vga_top #(
     parameter WIDTH = 27
@@ -306,24 +306,28 @@ module test_vga_top #(
     );
 
     // =======================================================================
-    // FB test writer (ui_clk domain)
-    // One-shot: fills frame buffer with all-white pixels after calibration.
+    // Frame renderer (ui_clk domain)
+    // Renders text from screen_text_rom via font_rom into DDR2 frame buffer.
+    // Writes to the back buffer (~fb_display_ff).
+    // screen_id from SW[14:12] for testing (replace with mode_fsm later).
     // =======================================================================
-    wire         fb_wr_req;
-    wire [26:0]  fb_wr_addr;
-    wire [127:0] fb_wr_data;
-    wire         fb_wr_grant;
-    wire         fb_ready;
+    wire         fr_wr_req;
+    wire [26:0]  fr_wr_addr;
+    wire [127:0] fr_wr_data;
+    wire         fr_wr_grant;
+    wire         render_done;
 
-    fb_test_writer u_fb_writer (
+    frame_renderer u_renderer (
         .ui_clk              (ui_clk),
         .rst_n               (arb_rst_n),
         .init_calib_complete (init_calib_complete),
-        .wr_req_ff           (fb_wr_req),
-        .wr_addr_ff          (fb_wr_addr),
-        .wr_data             (fb_wr_data),
-        .wr_grant            (fb_wr_grant),
-        .done_ff             (fb_ready)
+        .screen_id           (SW[14:12]),
+        .render_buf          (~fb_display_ff),
+        .wr_req_ff           (fr_wr_req),
+        .wr_addr_ff          (fr_wr_addr),
+        .wr_data_ff          (fr_wr_data),
+        .wr_grant            (fr_wr_grant),
+        .render_done_ff      (render_done)
     );
 
     // =======================================================================
@@ -346,11 +350,11 @@ module test_vga_top #(
         .vga_rd_addr          (vga_rd_addr),
         .vga_rd_grant_ff      (vga_rd_grant),
 
-        // Port 1: FB test writer
-        .render_wr_req        (fb_wr_req),
-        .render_wr_addr       (fb_wr_addr),
-        .render_wr_data       (fb_wr_data),
-        .render_wr_grant_ff   (fb_wr_grant),
+        // Port 1: Frame renderer
+        .render_wr_req        (fr_wr_req),
+        .render_wr_addr       (fr_wr_addr),
+        .render_wr_data       (fr_wr_data),
+        .render_wr_grant_ff   (fr_wr_grant),
 
         // Port 2: Prime plus write
         .prime_plus_rd_data   (acc_plus_rd_data),
@@ -450,26 +454,47 @@ module test_vga_top #(
     // =======================================================================
     // Double-buffer swap controller (ui_clk domain)
     // fb_display_ff selects which buffer the VGA reader reads from.
-    // The renderer writes to the OTHER buffer.
-    // After fb_ready (both buffers filled), toggle on every vsync.
+    // The renderer writes to ~fb_display_ff (the back buffer).
+    // Swap only on vsync rising edge AFTER render_done rises — never show
+    // a partially-rendered frame.
     // =======================================================================
     reg        fb_display_ff;       // 0 = FB_A, 1 = FB_B
+    reg        swap_pending_ff;     // back buffer ready, waiting for vsync
+    reg        rd_prev_ff;          // previous render_done for edge detect
     reg        vs_meta_top, vs_sync_top, vs_prev_top;
 
     always @(posedge ui_clk) begin
         if (ui_clk_sync_rst) begin
-            vs_meta_top  <= 1'b0;
-            vs_sync_top  <= 1'b0;
-            vs_prev_top  <= 1'b0;
-            fb_display_ff <= 1'b0;
+            vs_meta_top    <= 1'b0;
+            vs_sync_top    <= 1'b0;
+            vs_prev_top    <= 1'b0;
+            fb_display_ff  <= 1'b0;
+            swap_pending_ff <= 1'b0;
+            rd_prev_ff     <= 1'b0;
         end else begin
             vs_meta_top <= vsync;
             vs_sync_top <= vs_meta_top;
             vs_prev_top <= vs_sync_top;
-            // Toggle display buffer on vsync rising edge once both buffers ready
-            if (vs_sync_top && !vs_prev_top && fb_ready)
-                fb_display_ff <= ~fb_display_ff;
+            rd_prev_ff  <= render_done;
+            // Rising edge of render_done -> back buffer has valid content
+            if (render_done && !rd_prev_ff)
+                swap_pending_ff <= 1'b1;
+            // Swap on vsync rising edge when a completed render is pending
+            if (vs_sync_top && !vs_prev_top && swap_pending_ff) begin
+                fb_display_ff   <= ~fb_display_ff;
+                swap_pending_ff <= 1'b0;
+            end
         end
+    end
+
+    // VGA reader enable: latches high after first render completes.
+    // Stays high during re-renders so the display buffer keeps being read.
+    reg vga_enable_ff;
+    always @(posedge ui_clk) begin
+        if (ui_clk_sync_rst)
+            vga_enable_ff <= 1'b0;
+        else if (render_done)
+            vga_enable_ff <= 1'b1;
     end
 
     // =======================================================================
@@ -479,7 +504,7 @@ module test_vga_top #(
         .ui_clk              (ui_clk),
         .rst_n               (arb_rst_n),
         .init_calib_complete (init_calib_complete),
-        .enable              (fb_ready),
+        .enable              (vga_enable_ff),
 
         .fb_select           (fb_display_ff),
         .vsync_vga           (vsync),
@@ -553,6 +578,24 @@ module test_vga_top #(
     );
 
     // =======================================================================
+    // Activity toggles (ui_clk domain)
+    // =======================================================================
+    reg render_wr_toggle_ff;   // flips on each render write grant
+    reg vga_rd_toggle_ff;      // flips on each VGA read grant
+
+    always @(posedge ui_clk) begin
+        if (ui_clk_sync_rst) begin
+            render_wr_toggle_ff <= 1'b0;
+            vga_rd_toggle_ff    <= 1'b0;
+        end else begin
+            if (fr_wr_grant)
+                render_wr_toggle_ff <= ~render_wr_toggle_ff;
+            if (vga_rd_grant)
+                vga_rd_toggle_ff <= ~vga_rd_toggle_ff;
+        end
+    end
+
+    // =======================================================================
     // Heartbeat counters
     // =======================================================================
     reg [23:0] vga_heartbeat_ff;
@@ -568,23 +611,31 @@ module test_vga_top #(
     end
 
     // =======================================================================
-    // LED status
+    // LED status — focused on VGA / frame renderer debugging
     // =======================================================================
-    assign LED[0]  = init_calib_complete;
-    assign LED[1]  = fb_ready;
-    assign LED[2]  = fifo_empty;
-    assign LED[3]  = fifo_full;
-    assign LED[4]  = eng_plus_busy;
-    assign LED[5]  = eng_minus_busy;
-    assign LED[6]  = acc_plus_fifo_empty;
-    assign LED[7]  = acc_minus_fifo_empty;
-    assign LED[8]  = wr_toggle_plus_ff;
-    assign LED[9]  = wr_toggle_minus_ff;
-    assign LED[10] = |state_out;
-    assign LED[11] = pll_locked;
-    assign LED[12] = 1'b0;
-    assign LED[13] = 1'b0;
-    assign LED[14] = ui_heartbeat_ff[23];
-    assign LED[15] = vga_heartbeat_ff[23];
+    // Startup & health
+    assign LED[0]  = init_calib_complete;        // DDR2 calibrated
+    assign LED[1]  = pll_locked;                 // clocks stable
+    // Renderer state
+    assign LED[2]  = render_done;                // latest render complete
+    assign LED[3]  = vga_enable_ff;              // VGA reader enabled (latched)
+    // Double-buffer state
+    assign LED[4]  = swap_pending_ff;            // back buffer ready, awaiting vsync
+    assign LED[5]  = fb_display_ff;              // which buffer displayed (0=A, 1=B)
+    // Activity toggles (blink = healthy traffic)
+    assign LED[6]  = render_wr_toggle_ff;        // render write activity
+    assign LED[7]  = vga_rd_toggle_ff;           // VGA read activity
+    // Pixel FIFO health
+    assign LED[8]  = fifo_empty;                 // empty = potential underrun
+    assign LED[9]  = fifo_full;                  // full = potential overflow
+    // Arbiter handshake (stuck ON = stalled requestor)
+    assign LED[10] = fr_wr_req;                  // renderer requesting write
+    assign LED[11] = vga_rd_req;                 // VGA reader requesting read
+    // VGA timing (informal CDC, fine for LEDs)
+    assign LED[12] = vs_sync_top;                // vsync (CDC'd to ui_clk)
+    assign LED[13] = video_on;                   // active display area
+    // Heartbeats (blink ~3 Hz = clock alive)
+    assign LED[14] = ui_heartbeat_ff[23];        // ui_clk heartbeat
+    assign LED[15] = vga_heartbeat_ff[23];       // clk_vga heartbeat
 
 endmodule

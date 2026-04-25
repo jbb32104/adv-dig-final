@@ -29,9 +29,11 @@ module font_rom (
     // -----------------------------------------------------------------------
     // Font data initialization
     // -----------------------------------------------------------------------
+    integer i;
     initial begin
-        // Unwritten addresses default to 8'h00 (Xilinx BRAM inits to zero).
-        // Space (0x20) is all blank by default.
+        // Explicitly zero every entry so Vivado generates complete BRAM init
+        // data.  Relying on implicit zero-init can leave gaps in the bitstream.
+        for (i = 0; i < 2048; i = i + 1) rom[i] = 8'h00;
 
         // =================================================================
         // * (0x2A)  —  asterisk / star
