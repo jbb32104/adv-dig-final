@@ -85,13 +85,6 @@ module test_vga_top #(
     end
 
     // =======================================================================
-    // Input interpretation (from switches — n_limit, t_limit, check_candidate)
-    // =======================================================================
-    wire [WIDTH-1:0] n_limit         = {SW[15:2], {(WIDTH-14){1'b0}}};
-    wire [31:0]      t_limit         = {18'd0, SW[15:2]};
-    wire [WIDTH-1:0] check_candidate = {SW[15:2], {(WIDTH-14){1'b0}}};
-
-    // =======================================================================
     // Debounced button pulses (clk domain)
     // =======================================================================
     wire btnr_pulse, btnl_pulse;
@@ -166,17 +159,65 @@ module test_vga_top #(
     wire [2:0] screen_id_ff;
     wire [1:0] nav_mode_sel;
     wire       nav_go;
+    wire       nav_digit_press;
+    wire [3:0] nav_digit_value;
 
     keypad_nav u_keypad_nav (
+        .clk            (clk),
+        .rst            (~rst_sync_n),
+        .button         (kp_button),
+        .button_valid   (kp_button_valid),
+        .mode_done      (done),
+        .screen_id_ff   (screen_id_ff),
+        .mode_sel_ff    (nav_mode_sel),
+        .go_ff          (nav_go),
+        .digit_press_ff (nav_digit_press),
+        .digit_value_ff (nav_digit_value)
+    );
+
+    // =======================================================================
+    // Digit entry — captures keypad 0-9 presses, manages cursor, outputs BCD
+    // =======================================================================
+    wire [31:0] de_bcd_digits;
+    wire [3:0]  de_cursor_pos;
+    wire        de_changed;
+    wire        de_toggle;
+
+    digit_entry u_digit_entry (
+        .clk           (clk),
+        .rst           (~rst_sync_n),
+        .screen_id     (screen_id_ff),
+        .digit_press   (nav_digit_press),
+        .digit_value   (nav_digit_value),
+        .bcd_digits_ff (de_bcd_digits),
+        .cursor_pos_ff (de_cursor_pos),
+        .changed_ff    (de_changed),
+        .toggle_ff     (de_toggle)
+    );
+
+    // =======================================================================
+    // BCD-to-binary converter — 7 DSP multipliers + looping accumulator
+    // =======================================================================
+    wire [26:0] bin_value;
+    wire        bin_valid;
+
+    bcd_to_bin u_bcd_to_bin (
         .clk          (clk),
         .rst          (~rst_sync_n),
-        .button       (kp_button),
-        .button_valid (kp_button_valid),
-        .mode_done    (done),
-        .screen_id_ff (screen_id_ff),
-        .mode_sel_ff  (nav_mode_sel),
-        .go_ff        (nav_go)
+        .bcd_digits   (de_bcd_digits),
+        .start        (de_changed),
+        .bin_value_ff (bin_value),
+        .valid_ff     (bin_valid)
     );
+
+    // =======================================================================
+    // Input interpretation — from keypad BCD-to-binary converter
+    // n_limit (27-bit), t_limit (32-bit), check_candidate (27-bit)
+    // all driven from the same bin_value since only one mode is active.
+    // =======================================================================
+    wire [WIDTH-1:0] n_limit         = bin_value;
+    wire [31:0]      t_limit         = {5'd0, bin_value};
+    wire [WIDTH-1:0] check_candidate = bin_value;
 
     // =======================================================================
     // PLL: 100 MHz -> 25 MHz (clk_vga), 200 MHz (clk_mem)
@@ -411,6 +452,9 @@ module test_vga_top #(
         .rst_n               (arb_rst_n),
         .init_calib_complete (init_calib_complete),
         .screen_id           (screen_id_ff),
+        .bcd_digits          (de_bcd_digits),
+        .cursor_pos          (de_cursor_pos),
+        .digit_toggle        (de_toggle),
         .render_buf          (~fb_display_ff),
         .wr_req_ff           (fr_wr_req),
         .wr_addr_ff          (fr_wr_addr),

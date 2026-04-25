@@ -13,6 +13,7 @@
 //   6: RESULTS    "RESULTS"
 //
 // Keypad actions:
+//   0-9      — on mode screens 1-3, digit entry (digit_press pulse)
 //   A/B/C/D  — from any non-loading screen, navigate to mode screen
 //   *  (0xE) — from mode screens 1-4, start prime finder (go pulse)
 //   #  (0xF) — from any non-loading screen, return to HOME
@@ -35,7 +36,11 @@ module keypad_nav (
     // Outputs (clk domain)
     output reg  [2:0]  screen_id_ff,
     output reg  [1:0]  mode_sel_ff,
-    output reg         go_ff
+    output reg         go_ff,
+
+    // Digit entry outputs (for digit_entry module)
+    output reg         digit_press_ff,  // 1-cycle pulse on 0-9 press
+    output reg  [3:0]  digit_value_ff   // which digit (0-9)
 );
 
     // Screen IDs
@@ -70,6 +75,8 @@ module keypad_nav (
     reg        go_next;
     reg        bv_prev_next;
     reg        bv_rising;
+    reg        digit_press_next;
+    reg [3:0]  digit_value_next;
 
     // -----------------------------------------------------------------------
     // Combinational next-state logic (including reset)
@@ -78,16 +85,20 @@ module keypad_nav (
         bv_rising = button_valid && !bv_prev_ff;
 
         if (rst) begin
-            screen_id_next = SCR_HOME;
-            mode_sel_next  = 2'd0;
-            go_next        = 1'b0;
-            bv_prev_next   = 1'b0;
+            screen_id_next   = SCR_HOME;
+            mode_sel_next    = 2'd0;
+            go_next          = 1'b0;
+            bv_prev_next     = 1'b0;
+            digit_press_next = 1'b0;
+            digit_value_next = 4'd0;
         end else begin
             // Defaults: hold
-            screen_id_next = screen_id_ff;
-            mode_sel_next  = mode_sel_ff;
-            go_next        = 1'b0;
-            bv_prev_next   = button_valid;
+            screen_id_next   = screen_id_ff;
+            mode_sel_next    = mode_sel_ff;
+            go_next          = 1'b0;
+            bv_prev_next     = button_valid;
+            digit_press_next = 1'b0;
+            digit_value_next = 4'd0;
 
             // Auto-transition: LOADING -> RESULTS when mode_fsm is done
             if (screen_id_ff == SCR_LOADING && mode_done) begin
@@ -97,6 +108,15 @@ module keypad_nav (
             // Keypad press handling (rising edge of button_valid only)
             // LOADING screen ignores all input — wait for mode_done.
             if (bv_rising && screen_id_ff != SCR_LOADING) begin
+
+                // 0-9 digit entry on mode screens with numeric input
+                if (button <= 4'h9 &&
+                    (screen_id_ff == SCR_NMAX  ||
+                     screen_id_ff == SCR_TIME  ||
+                     screen_id_ff == SCR_SINGLE)) begin
+                    digit_press_next = 1'b1;
+                    digit_value_next = button;
+                end
 
                 // A/B/C/D — navigate between modes from any non-loading screen
                 case (button)
@@ -143,10 +163,12 @@ module keypad_nav (
     // Sequential block — flops only
     // -----------------------------------------------------------------------
     always @(posedge clk) begin
-        screen_id_ff <= screen_id_next;
-        mode_sel_ff  <= mode_sel_next;
-        go_ff        <= go_next;
-        bv_prev_ff   <= bv_prev_next;
+        screen_id_ff   <= screen_id_next;
+        mode_sel_ff    <= mode_sel_next;
+        go_ff          <= go_next;
+        bv_prev_ff     <= bv_prev_next;
+        digit_press_ff <= digit_press_next;
+        digit_value_ff <= digit_value_next;
     end
 
 endmodule
