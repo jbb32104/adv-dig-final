@@ -16,14 +16,17 @@
 //   ui_clk   (~75 MHz) — arbiter, accumulators (read side), DDR2, VGA reader
 //
 // LED debug (all focused on VGA/renderer integration):
+//   Normal mode:
 //   LED[0]  init_calib_complete    LED[8]  pixel_fifo empty
 //   LED[1]  pll_locked             LED[9]  pixel_fifo full
 //   LED[2]  render_done            LED[10] render wr req (stuck=stall)
 //   LED[3]  vga_enable (latched)   LED[11] VGA rd req (stuck=stall)
-//   LED[4]  swap_pending           LED[12] vsync (CDC'd, frame pulse)
-//   LED[5]  fb_display (0=A,1=B)  LED[13] video_on (active display)
-//   LED[6]  render wr activity     LED[14] ui_clk heartbeat
-//   LED[7]  VGA rd activity        LED[15] clk_vga heartbeat
+//   LED[4]  swap_pending           LED[12] test_done
+//   LED[5]  fb_display (0=A,1=B)  LED[13] test_active
+//   LED[6]  render wr activity     LED[14] test_pass
+//   LED[7]  VGA rd activity        LED[15] test FAIL
+//   When test_done: LED[6:0] = match_count (binary)
+//   SSD: page 0 = match_count, page 1 = expected, page 2 = got
 
 module test_vga_top #(
     parameter WIDTH = 27
@@ -96,6 +99,18 @@ module test_vga_top #(
     debounce #(.DEBOUNCE_CYCLES(500_000)) u_dbnc_btnl (
         .clk(clk), .rst_n(rst_sync_n), .btn_in(BTNL),
         .btn_state_ff(), .rising_pulse_ff(btnl_pulse), .falling_pulse_ff()
+    );
+
+    wire btnd_pulse;
+    debounce #(.DEBOUNCE_CYCLES(500_000)) u_dbnc_btnd (
+        .clk(clk), .rst_n(rst_sync_n), .btn_in(BTND),
+        .btn_state_ff(), .rising_pulse_ff(btnd_pulse), .falling_pulse_ff()
+    );
+
+    wire btnc_pulse;
+    debounce #(.DEBOUNCE_CYCLES(500_000)) u_dbnc_btnc (
+        .clk(clk), .rst_n(rst_sync_n), .btn_in(BTNC),
+        .btn_state_ff(), .rising_pulse_ff(btnc_pulse), .falling_pulse_ff()
     );
 
     // =======================================================================
@@ -622,11 +637,11 @@ module test_vga_top #(
 
     // =======================================================================
     // mem_arbiter (ui_clk domain)
-    // All four ports active.
+    // All four ports active. Port 0 read is muxed between VGA reader and
+    // test_prime_checker (test checker takes over while test_active_ff=1).
     // =======================================================================
     wire        vga_rd_req;
     wire [26:0] vga_rd_addr;
-    wire        vga_rd_grant;
     wire [127:0] arb_rd_data;
     wire         arb_rd_data_valid;
 
@@ -635,10 +650,10 @@ module test_vga_top #(
         .rst_n                (arb_rst_n),
         .init_calib_complete  (init_calib_complete),
 
-        // Port 0: VGA read (highest priority)
-        .vga_rd_req           (vga_rd_req),
-        .vga_rd_addr          (vga_rd_addr),
-        .vga_rd_grant_ff      (vga_rd_grant),
+        // Port 0: Read (muxed between VGA reader and test checker)
+        .vga_rd_req           (mux_rd_req),
+        .vga_rd_addr          (mux_rd_addr),
+        .vga_rd_grant_ff      (mux_rd_grant),
 
         // Port 1: Frame renderer
         .render_wr_req        (fr_wr_req),
@@ -801,7 +816,7 @@ module test_vga_top #(
 
         .vga_rd_req_ff       (vga_rd_req),
         .vga_rd_addr_ff      (vga_rd_addr),
-        .vga_rd_grant        (vga_rd_grant),
+        .vga_rd_grant        (vga_rd_grant_wire),
 
         .rd_data             (arb_rd_data),
         .rd_data_valid       (arb_rd_data_valid),
@@ -811,6 +826,169 @@ module test_vga_top #(
         .fifo_full           (fifo_full),
         .fifo_wr_rst_busy    (fifo_wr_rst_busy)
     );
+
+    // =======================================================================
+    // Test prime checker (ui_clk domain)
+    // BTND triggers a readback of the DDR2 bitmaps and comparison against a
+    // ROM of the first 100 primes. Shares the arbiter read port with the
+    // VGA reader via a mux — VGA reader is gated off while the test runs.
+    // =======================================================================
+
+    // ---- CDC: btnd_pulse (clk) -> test_start_ui (ui_clk) via toggle ----
+    reg  test_toggle_clk_ff;
+    always @(posedge clk) begin
+        if (!rst_sync_n)
+            test_toggle_clk_ff <= 1'b0;
+        else if (btnd_pulse)
+            test_toggle_clk_ff <= ~test_toggle_clk_ff;
+    end
+
+    reg test_tog_meta_ff, test_tog_sync_ff, test_tog_prev_ff;
+    always @(posedge ui_clk) begin
+        if (ui_clk_sync_rst) begin
+            test_tog_meta_ff <= 1'b0;
+            test_tog_sync_ff <= 1'b0;
+            test_tog_prev_ff <= 1'b0;
+        end else begin
+            test_tog_meta_ff <= test_toggle_clk_ff;
+            test_tog_sync_ff <= test_tog_meta_ff;
+            test_tog_prev_ff <= test_tog_sync_ff;
+        end
+    end
+    wire test_start_ui = test_tog_sync_ff ^ test_tog_prev_ff;
+
+    // ---- CDC: btnc_pulse (clk) -> browse_step_ui (ui_clk) via toggle ----
+    reg  browse_toggle_clk_ff;
+    always @(posedge clk) begin
+        if (!rst_sync_n)
+            browse_toggle_clk_ff <= 1'b0;
+        else if (btnc_pulse)
+            browse_toggle_clk_ff <= ~browse_toggle_clk_ff;
+    end
+
+    reg browse_tog_meta_ff, browse_tog_sync_ff, browse_tog_prev_ff;
+    always @(posedge ui_clk) begin
+        if (ui_clk_sync_rst) begin
+            browse_tog_meta_ff <= 1'b0;
+            browse_tog_sync_ff <= 1'b0;
+            browse_tog_prev_ff <= 1'b0;
+        end else begin
+            browse_tog_meta_ff <= browse_toggle_clk_ff;
+            browse_tog_sync_ff <= browse_tog_meta_ff;
+            browse_tog_prev_ff <= browse_tog_sync_ff;
+        end
+    end
+    wire browse_step_ui = browse_tog_sync_ff ^ browse_tog_prev_ff;
+
+    // ---- Test checker instance ----
+    wire        test_done;
+    wire        test_pass;
+    wire [6:0]  test_match_count;
+    wire [WIDTH-1:0] test_expected, test_got;
+    wire        test_rd_req;
+    wire [26:0] test_rd_addr;
+    wire [7:0] test_dbg_m_b0, test_dbg_m_b1, test_dbg_m_b2, test_dbg_m_b3;
+    wire [7:0] test_dbg_p_b0;
+
+    test_prime_checker #(.WIDTH(WIDTH)) u_test_checker (
+        .clk                 (ui_clk),
+        .rst_n               (arb_rst_n),
+        .init_calib_complete (init_calib_complete),
+        .start               (test_start_ui),
+        .done_ff             (test_done),
+        .pass_ff             (test_pass),
+        .match_count_ff      (test_match_count),
+        .expected_ff         (test_expected),
+        .got_ff              (test_got),
+        .rd_req_ff           (test_rd_req),
+        .rd_addr_ff          (test_rd_addr),
+        .rd_grant            (test_rd_grant),
+        .rd_data             (arb_rd_data),
+        .rd_data_valid       (arb_rd_data_valid),
+        .dbg_minus_b0        (test_dbg_m_b0),
+        .dbg_minus_b1        (test_dbg_m_b1),
+        .dbg_minus_b2        (test_dbg_m_b2),
+        .dbg_minus_b3        (test_dbg_m_b3),
+        .dbg_plus_b0         (test_dbg_p_b0)
+    );
+
+    // Test is active from start until done (blocks VGA reader from read port)
+    reg test_active_ff;
+    always @(posedge ui_clk) begin
+        if (ui_clk_sync_rst)
+            test_active_ff <= 1'b0;
+        else if (test_start_ui)
+            test_active_ff <= 1'b1;
+        else if (test_done)
+            test_active_ff <= 1'b0;
+    end
+
+    // =======================================================================
+    // DDR2 memory browser (ui_clk domain)
+    // BTNC reads one 128-bit word from DDR2 starting at address 0,
+    // incrementing by 16 bytes per press. Data shown on SSD.
+    // =======================================================================
+    reg [1:0]   browse_state_ff;
+    reg [26:0]  browse_addr_ff;       // next address to read
+    reg [26:0]  browse_disp_addr_ff;  // address of currently displayed data
+    reg [127:0] browse_data_ff;
+    reg         browse_rd_req_ff;
+    reg         browse_has_data_ff;
+    reg         browse_data_toggle_ff; // toggles on each new data latch
+
+    always @(posedge ui_clk) begin
+        if (ui_clk_sync_rst) begin
+            browse_state_ff      <= 2'd0;
+            browse_addr_ff       <= 27'd0;
+            browse_disp_addr_ff  <= 27'd0;
+            browse_data_ff       <= 128'd0;
+            browse_rd_req_ff     <= 1'b0;
+            browse_has_data_ff   <= 1'b0;
+            browse_data_toggle_ff <= 1'b0;
+        end else begin
+            case (browse_state_ff)
+                2'd0: begin  // IDLE
+                    browse_rd_req_ff <= 1'b0;
+                    if (browse_step_ui && init_calib_complete) begin
+                        browse_rd_req_ff <= 1'b1;
+                        browse_state_ff  <= 2'd1;
+                    end
+                end
+                2'd1: begin  // REQ — hold until grant
+                    browse_rd_req_ff <= 1'b1;
+                    if (browse_rd_grant) begin
+                        browse_rd_req_ff <= 1'b0;
+                        browse_state_ff  <= 2'd2;
+                    end
+                end
+                2'd2: begin  // WAIT — latch data on valid
+                    if (arb_rd_data_valid) begin
+                        browse_data_ff        <= arb_rd_data;
+                        browse_disp_addr_ff   <= browse_addr_ff;
+                        browse_addr_ff        <= browse_addr_ff + 27'd16;
+                        browse_has_data_ff    <= 1'b1;
+                        browse_data_toggle_ff <= ~browse_data_toggle_ff;
+                        browse_state_ff       <= 2'd0;
+                    end
+                end
+                default: browse_state_ff <= 2'd0;
+            endcase
+        end
+    end
+
+    wire browse_active = (browse_state_ff != 2'd0);
+
+    // ---- Read port mux: test > browse > VGA ----
+    wire        mux_rd_req   = test_active_ff ? test_rd_req
+                             : browse_active  ? browse_rd_req_ff
+                             :                  vga_rd_req;
+    wire [26:0] mux_rd_addr  = test_active_ff ? test_rd_addr
+                             : browse_active  ? browse_addr_ff
+                             :                  vga_rd_addr;
+    wire        mux_rd_grant;
+    wire        test_rd_grant     = test_active_ff                     ? mux_rd_grant : 1'b0;
+    wire        browse_rd_grant   = (!test_active_ff && browse_active) ? mux_rd_grant : 1'b0;
+    wire        vga_rd_grant_wire = (!test_active_ff && !browse_active) ? mux_rd_grant : 1'b0;
 
     // =======================================================================
     // Sprite Animator (clk_vga domain) — bouncing "PRIME FINDER" on screen 0
@@ -876,7 +1054,27 @@ module test_vga_top #(
     always @(*) begin
         ssd_value = 32'd0;
         ssd_dp_en = 8'h10;
-        if (ssd_show_stopwatch) begin
+        if (browse_hd_clk_ff) begin
+            // DDR2 memory browser (pages cycled by BTNR)
+            // Page 0: data[31:0]    Page 1: data[63:32]
+            // Page 2: data[95:64]   Page 3: data[127:96]
+            case (ssd_page_ff)
+                2'd0: ssd_value = br_data0_clk_ff;
+                2'd1: ssd_value = br_data1_clk_ff;
+                2'd2: ssd_value = br_data2_clk_ff;
+                default: ssd_value = br_data3_clk_ff;
+            endcase
+            ssd_dp_en = 8'h01 << ssd_page_ff;
+        end else if (test_done_clk_ff) begin
+            // Test debug display (pages cycled by BTNR)
+            case (ssd_page_ff)
+                2'd0: ssd_value = {test_m_b3_ff, test_m_b2_ff, test_m_b1_ff, test_m_b0_ff};
+                2'd1: ssd_value = {test_mc_clk_ff, 1'b0, test_p_b0_ff, 16'd0};
+                2'd2: ssd_value = {{32-WIDTH{1'b0}}, test_exp_clk_ff};
+                default: ssd_value = {{32-WIDTH{1'b0}}, test_got_clk_ff};
+            endcase
+            ssd_dp_en = 8'h01 << ssd_page_ff;
+        end else if (ssd_show_stopwatch) begin
             ssd_value = sw_bcd;
             ssd_dp_en = 8'h10;  // decimal point on digit 4: SSSS.FFFF
         end else begin
@@ -916,7 +1114,7 @@ module test_vga_top #(
         end else begin
             if (fr_wr_grant)
                 render_wr_toggle_ff <= ~render_wr_toggle_ff;
-            if (vga_rd_grant)
+            if (mux_rd_grant)
                 vga_rd_toggle_ff <= ~vga_rd_toggle_ff;
         end
     end
@@ -937,31 +1135,103 @@ module test_vga_top #(
     end
 
     // =======================================================================
-    // LED status — focused on VGA / frame renderer debugging
+    // Test debug CDC: latch test results into clk domain for SSD/LEDs.
+    // These only change once (when test_done rises), so informal CDC is safe.
     // =======================================================================
-    // Startup & health
-    assign LED[0]  = init_calib_complete;        // DDR2 calibrated
-    assign LED[1]  = pll_locked;                 // clocks stable
-    // Renderer state
-    assign LED[2]  = render_done;                // latest render complete
-    assign LED[3]  = vga_enable_ff;              // VGA reader enabled (latched)
-    // Double-buffer state
-    assign LED[4]  = swap_pending_ff;            // back buffer ready, awaiting vsync
-    assign LED[5]  = fb_display_ff;              // which buffer displayed (0=A, 1=B)
-    // Activity toggles (blink = healthy traffic)
-    assign LED[6]  = render_wr_toggle_ff;        // render write activity
-    assign LED[7]  = vga_rd_toggle_ff;           // VGA read activity
-    // Pixel FIFO health
-    assign LED[8]  = fifo_empty;                 // empty = potential underrun
-    assign LED[9]  = fifo_full;                  // full = potential overflow
-    // Arbiter handshake (stuck ON = stalled requestor)
-    assign LED[10] = fr_wr_req;                  // renderer requesting write
-    assign LED[11] = vga_rd_req;                 // VGA reader requesting read
-    // VGA timing (informal CDC, fine for LEDs)
-    assign LED[12] = vs_sync_top;                // vsync (CDC'd to ui_clk)
-    assign LED[13] = video_on;                   // active display area
-    // Heartbeats (blink ~3 Hz = clock alive)
-    assign LED[14] = ui_heartbeat_ff[23];        // ui_clk heartbeat
-    assign LED[15] = vga_heartbeat_ff[23];       // clk_vga heartbeat
+    reg [6:0]       test_mc_clk_ff;        // match_count in clk domain
+    reg [WIDTH-1:0] test_exp_clk_ff;       // expected in clk domain
+    reg [WIDTH-1:0] test_got_clk_ff;       // got in clk domain
+    reg [7:0]       test_m_b0_ff, test_m_b1_ff, test_m_b2_ff, test_m_b3_ff;
+    reg [7:0]       test_p_b0_ff;
+    reg             test_done_clk_meta, test_done_clk_ff;
+
+    always @(posedge clk) begin
+        if (!rst_sync_n) begin
+            test_done_clk_meta <= 1'b0;
+            test_done_clk_ff  <= 1'b0;
+            test_mc_clk_ff    <= 7'd0;
+            test_exp_clk_ff   <= {WIDTH{1'b0}};
+            test_got_clk_ff   <= {WIDTH{1'b0}};
+            test_m_b0_ff      <= 8'd0;
+            test_m_b1_ff      <= 8'd0;
+            test_m_b2_ff      <= 8'd0;
+            test_m_b3_ff      <= 8'd0;
+            test_p_b0_ff      <= 8'd0;
+        end else begin
+            test_done_clk_meta <= test_done;
+            test_done_clk_ff  <= test_done_clk_meta;
+            if (test_done_clk_meta && !test_done_clk_ff) begin
+                // Rising edge: latch results
+                test_mc_clk_ff <= test_match_count;
+                test_exp_clk_ff <= test_expected;
+                test_got_clk_ff <= test_got;
+                test_m_b0_ff   <= test_dbg_m_b0;
+                test_m_b1_ff   <= test_dbg_m_b1;
+                test_m_b2_ff   <= test_dbg_m_b2;
+                test_m_b3_ff   <= test_dbg_m_b3;
+                test_p_b0_ff   <= test_dbg_p_b0;
+            end
+        end
+    end
+
+    // =======================================================================
+    // Browse data CDC (ui_clk → clk): data changes once per button press,
+    // stable for hundreds of ms — toggle-based CDC is safe.
+    // =======================================================================
+    reg        br_tog_meta_ff, br_tog_sync_ff, br_tog_prev_ff;
+    reg        browse_hd_clk_ff;
+    reg [31:0] br_data0_clk_ff, br_data1_clk_ff, br_data2_clk_ff, br_data3_clk_ff;
+    reg [26:0] br_addr_clk_ff;
+
+    always @(posedge clk) begin
+        if (!rst_sync_n) begin
+            br_tog_meta_ff  <= 1'b0;
+            br_tog_sync_ff  <= 1'b0;
+            br_tog_prev_ff  <= 1'b0;
+            browse_hd_clk_ff <= 1'b0;
+            br_data0_clk_ff <= 32'd0;
+            br_data1_clk_ff <= 32'd0;
+            br_data2_clk_ff <= 32'd0;
+            br_data3_clk_ff <= 32'd0;
+            br_addr_clk_ff  <= 27'd0;
+        end else begin
+            br_tog_meta_ff <= browse_data_toggle_ff;
+            br_tog_sync_ff <= br_tog_meta_ff;
+            br_tog_prev_ff <= br_tog_sync_ff;
+            if (br_tog_sync_ff != br_tog_prev_ff) begin
+                browse_hd_clk_ff <= 1'b1;
+                br_data0_clk_ff  <= browse_data_ff[31:0];
+                br_data1_clk_ff  <= browse_data_ff[63:32];
+                br_data2_clk_ff  <= browse_data_ff[95:64];
+                br_data3_clk_ff  <= browse_data_ff[127:96];
+                br_addr_clk_ff   <= browse_disp_addr_ff;
+            end
+        end
+    end
+
+    // =======================================================================
+    // LED status
+    // When test_done: LED[6:0] = match_count (binary), LED[15:12] = test status
+    // Otherwise: normal VGA/renderer debugging
+    // =======================================================================
+    // Startup & health (always visible)
+    assign LED[0]  = test_done_clk_ff ? test_mc_clk_ff[0] : init_calib_complete;
+    assign LED[1]  = test_done_clk_ff ? test_mc_clk_ff[1] : pll_locked;
+    assign LED[2]  = test_done_clk_ff ? test_mc_clk_ff[2] : render_done;
+    assign LED[3]  = test_done_clk_ff ? test_mc_clk_ff[3] : vga_enable_ff;
+    assign LED[4]  = test_done_clk_ff ? test_mc_clk_ff[4] : swap_pending_ff;
+    assign LED[5]  = test_done_clk_ff ? test_mc_clk_ff[5] : fb_display_ff;
+    assign LED[6]  = test_done_clk_ff ? test_mc_clk_ff[6] : render_wr_toggle_ff;
+    // Non-muxed
+    assign LED[7]  = vga_rd_toggle_ff;
+    assign LED[8]  = fifo_empty;
+    assign LED[9]  = fifo_full;
+    assign LED[10] = fr_wr_req;
+    assign LED[11] = vga_rd_req;
+    // Test checker status (ui_clk domain, informal CDC fine for LEDs)
+    assign LED[12] = test_done;
+    assign LED[13] = test_active_ff;
+    assign LED[14] = test_pass;
+    assign LED[15] = test_done & ~test_pass;
 
 endmodule
