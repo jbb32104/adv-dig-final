@@ -70,6 +70,9 @@ module frame_renderer #(
     input  wire [35:0] test_got_bcd,       // got value in 9-digit BCD (clk)
     input  wire        test_bcd_toggle,    // flips on test BCD conversion done (clk)
 
+    // Single-num result (clk domain — CDC'd internally)
+    input  wire        is_prime_result,    // 1=prime, 0=composite (from mode_fsm)
+
     // Which buffer to write: 0 = FB_A, 1 = FB_B
     input  wire        render_buf,
 
@@ -125,6 +128,9 @@ module frame_renderer #(
     reg        ttog_meta_ff, ttog_sync_ff;
     reg        ttog_rendered_ff;
 
+    // Single-num is_prime_result CDC (clk → ui_clk)
+    reg        ipr_meta_ff, ipr_sync_ff;
+
     always @(posedge ui_clk) begin
         mode_meta_ff  <= mode_sel;
         mode_sync_ff  <= mode_meta_ff;
@@ -154,6 +160,8 @@ module frame_renderer #(
         tgot_sync_ff  <= tgot_meta_ff;
         ttog_meta_ff  <= test_bcd_toggle;
         ttog_sync_ff  <= ttog_meta_ff;
+        ipr_meta_ff   <= is_prime_result;
+        ipr_sync_ff   <= ipr_meta_ff;
     end
 
     // digit_dirty: true when digits changed since last render started.
@@ -412,7 +420,8 @@ module frame_renderer #(
     wire [3:0] got_fnz = first_nz(tgot_sync_ff);
 
     // Test foreground color: green for pass, red for fail
-    wire [7:0] test_fg_color = test_pass ? GR_COLOR : HL_COLOR;
+    wire [7:0] test_fg_color   = test_pass ? GR_COLOR : HL_COLOR;
+    wire [7:0] single_fg_color = ipr_sync_ff ? GR_COLOR : HL_COLOR;
 
     // Test digit index: char positions 6-14 map to BCD indices 8-0
     function [3:0] test_dig_idx;
@@ -429,7 +438,9 @@ module frame_renderer #(
     wire is_results_screen = (render_sid_ff == 3'd6);
     wire mode_is_timer     = (mode_sync_ff == 2'd2);
     wire mode_is_test      = (mode_sync_ff == 2'd0);
+    wire mode_is_single    = (mode_sync_ff == 2'd3);
     wire is_test_results   = mode_is_test && is_results_screen;
+    wire is_single_results = mode_is_single && is_results_screen;
     wire is_entry_screen   = (render_sid_ff == 3'd1) ||
                              (render_sid_ff == 3'd2) ||
                              (render_sid_ff == 3'd3);
@@ -464,12 +475,14 @@ module frame_renderer #(
         is_line0 = (line_idx_ff == 4'd0);
 
         // Text region: which words contain character data
-        // Test mode: only lines 0-2 have text (pass: 0-1, fail: 0-2)
+        // Test mode: only lines 0-2 have text; single mode: only line 0
         if (is_line0)
             is_text = (render_sid_ff != 3'd0 && word_idx_ff >= 6'd10 && word_idx_ff < 6'd30);
+        else if (is_single_results)
+            is_text = 1'b0;  // single-num results: only line 0 has text
         else if (line_idx_ff <= 4'd2)
             is_text = (word_idx_ff >= 6'd15 && word_idx_ff < 6'd25);
-        else if (is_results_screen && !mode_is_test)
+        else if (is_results_screen && !mode_is_test && !mode_is_single)
             is_text = (word_idx_ff >= 6'd15 && word_idx_ff < 6'd25);
         else
             is_text = 1'b0;  // lines 3-11 on non-results or test: all background
@@ -556,17 +569,21 @@ module frame_renderer #(
         // Background word: 16 pixels of BG_COLOR
         bg_word = {16{BG_COLOR}};
 
-        // Per-character foreground: test mode uses green/red, else cursor=red, default=white
+        // Per-character foreground: test/single mode uses green/red, else cursor=red, default=white
         if (is_test_results) begin
             fg_a = test_fg_color;
             fg_b = test_fg_color;
+        end else if (is_single_results) begin
+            fg_a = single_fg_color;
+            fg_b = single_fg_color;
         end else begin
             fg_a = (cursor_a_ff && line_idx_ff == 4'd1) ? HL_COLOR : FG_COLOR;
             fg_b = (cursor_b_ff && line_idx_ff == 4'd1) ? HL_COLOR : FG_COLOR;
         end
 
-        // Line 0 foreground: green/red for test results, white otherwise
-        line0_fg = is_test_results ? test_fg_color : FG_COLOR;
+        // Line 0 foreground: green/red for test/single results, white otherwise
+        line0_fg = is_test_results  ? test_fg_color   :
+                   is_single_results ? single_fg_color : FG_COLOR;
 
         // 2x expanded word: each glyph bit -> 2 adjacent pixels (line 0)
         word_2x = {
@@ -811,6 +828,43 @@ module frame_renderer #(
     end
 
     // -----------------------------------------------------------------------
+    // Single-num mode character overrides (screen 6 in single mode)
+    // Line 0: "     PRIME          " (green) or "   COMPOSITE        " (red)
+    // Lines 1+: blank (suppressed by is_text)
+    // -----------------------------------------------------------------------
+    reg [6:0] single_ovr_a;
+    always @(*) begin
+        single_ovr_a = 7'd0;
+        if (is_single_results && is_line0) begin
+            if (ipr_sync_ff) begin
+                // "     PRIME          "
+                case (char_pos_0)
+                    5'd7:  single_ovr_a = 7'h50; // P
+                    5'd8:  single_ovr_a = 7'h52; // R
+                    5'd9:  single_ovr_a = 7'h49; // I
+                    5'd10: single_ovr_a = 7'h4D; // M
+                    5'd11: single_ovr_a = 7'h45; // E
+                    default: single_ovr_a = 7'd0;
+                endcase
+            end else begin
+                // "   COMPOSITE        "
+                case (char_pos_0)
+                    5'd5:  single_ovr_a = 7'h43; // C
+                    5'd6:  single_ovr_a = 7'h4F; // O
+                    5'd7:  single_ovr_a = 7'h4D; // M
+                    5'd8:  single_ovr_a = 7'h50; // P
+                    5'd9:  single_ovr_a = 7'h4F; // O
+                    5'd10: single_ovr_a = 7'h53; // S
+                    5'd11: single_ovr_a = 7'h49; // I
+                    5'd12: single_ovr_a = 7'h54; // T
+                    5'd13: single_ovr_a = 7'h45; // E
+                    default: single_ovr_a = 7'd0;
+                endcase
+            end
+        end
+    end
+
+    // -----------------------------------------------------------------------
     // Combinational ROM address driving + digit/results override
     // -----------------------------------------------------------------------
     always @(*) begin
@@ -834,6 +888,9 @@ module frame_renderer #(
                 if (is_test_results) begin
                     // Test mode: override all characters on screen 6
                     font_char = test_ovr_a;
+                end else if (is_single_results) begin
+                    // Single-num mode: override line 0 with PRIME/COMPOSITE
+                    font_char = single_ovr_a;
                 end else if (is_results_prime_line) begin
                     // Results prime lines: use pre-computed character
                     font_char = res_char_a;
@@ -1007,7 +1064,7 @@ module frame_renderer #(
                             line_idx_next = line_idx_ff + 4'd1;
                             // If next line is a results prime line, prefetch BCD
                             // (skip for test mode — no prime list to display)
-                            if (is_results_screen && !mode_is_test && (line_idx_ff + 4'd1 >= 4'd2))
+                            if (is_results_screen && !mode_is_test && !mode_is_single && (line_idx_ff + 4'd1 >= 4'd2))
                                 state_next = S_RFETCH_L;
                             else
                                 state_next = S_WORD_START;

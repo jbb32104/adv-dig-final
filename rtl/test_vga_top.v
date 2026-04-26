@@ -631,6 +631,7 @@ module test_vga_top #(
         .test_exp_bcd        (test_exp_bcd),
         .test_got_bcd        (test_got_bcd),
         .test_bcd_toggle     (test_bcd_toggle_ff),
+        .is_prime_result     (is_prime_result),
         .render_buf          (~fb_display_ff),
         .wr_req_ff           (fr_wr_req),
         .wr_addr_ff          (fr_wr_addr),
