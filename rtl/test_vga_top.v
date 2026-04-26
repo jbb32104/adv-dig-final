@@ -513,6 +513,62 @@ module test_vga_top #(
         .bcd_ff (sw_bcd)
     );
 
+    // =======================================================================
+    // Prime tracker — circular buffer for last 20 engine-found primes
+    // Cleared on timer_restart (same pulse that starts a new computation).
+    // plus_found/minus_found pulse when the accumulator gets a valid prime.
+    // =======================================================================
+    wire [5:0]       tracker_rd_idx;     // driven by results_bcd
+    wire [WIDTH-1:0] tracker_rd_data;
+    wire [6:0]       tracker_count;
+
+    prime_tracker #(.WIDTH(WIDTH)) u_tracker (
+        .clk          (clk),
+        .rst_n        (rst_sync_n),
+        .clear        (timer_restart),
+        .plus_found   (acc_plus_valid & acc_plus_is_prime),
+        .plus_value   (eng_plus_candidate),
+        .minus_found  (acc_minus_valid & acc_minus_is_prime),
+        .minus_value  (eng_minus_candidate),
+        .read_idx     (tracker_rd_idx),
+        .read_data_ff (tracker_rd_data),
+        .count_ff     (tracker_count)
+    );
+
+    // =======================================================================
+    // Results BCD converter — converts tracker primes + seconds to BCD
+    // Triggered on rising edge of mode_fsm done signal.
+    // =======================================================================
+    reg done_prev_ff;
+    always @(posedge clk) begin
+        if (~rst_sync_n)
+            done_prev_ff <= 1'b0;
+        else
+            done_prev_ff <= done;
+    end
+    wire results_bcd_start = done & ~done_prev_ff;  // rising edge of done
+
+    wire [4:0]  rbcd_rd_addr;       // from frame_renderer
+    wire [35:0] rbcd_rd_data;       // to frame_renderer
+    wire [4:0]  results_display_count;
+    wire        results_done;
+
+    results_bcd #(.WIDTH(WIDTH)) u_results_bcd (
+        .clk              (clk),
+        .rst_n            (rst_sync_n),
+        .start            (results_bcd_start),
+        .tracker_count    (tracker_count),
+        .tracker_data     (tracker_rd_data),
+        .tracker_idx_ff   (tracker_rd_idx),
+        .n_limit          (n_limit),
+        .seconds_bcd      (sw_bcd[31:16]),
+        .display_count_ff (results_display_count),
+        .done_ff          (results_done),
+        .ui_clk           (ui_clk),
+        .rd_addr          (rbcd_rd_addr),
+        .rd_data_ff       (rbcd_rd_data)
+    );
+
     // Latch mode_sel on go pulse — holds the active mode for SSD display logic
     reg [1:0] latched_mode_ff;
     always @(posedge clk) begin
@@ -546,6 +602,11 @@ module test_vga_top #(
         .prime_bcd_toggle    (count_bcd_toggle),
         .input_bcd           (latched_bcd_ff),
         .countdown_bcd       (countdown_bcd),
+        .stopwatch_bcd       (sw_bcd),
+        .rbcd_rd_addr_ff     (rbcd_rd_addr),
+        .rbcd_rd_data        (rbcd_rd_data),
+        .results_display_count (results_display_count),
+        .results_done        (results_done),
         .render_buf          (~fb_display_ff),
         .wr_req_ff           (fr_wr_req),
         .wr_addr_ff          (fr_wr_addr),
