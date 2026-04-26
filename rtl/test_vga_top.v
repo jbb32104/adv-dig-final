@@ -182,7 +182,7 @@ module test_vga_top #(
         .rst            (~rst_sync_n),
         .button         (kp_button),
         .button_valid   (kp_button_valid),
-        .mode_done      (done),
+        .mode_done      (effective_done),
         .screen_id_ff   (screen_id_ff),
         .mode_sel_ff    (nav_mode_sel),
         .go_ff          (nav_go),
@@ -627,6 +627,10 @@ module test_vga_top #(
         .rbcd_rd_data        (rbcd_rd_data),
         .results_display_count (results_display_count),
         .results_done        (results_done),
+        .test_pass           (test_pass),
+        .test_exp_bcd        (test_exp_bcd),
+        .test_got_bcd        (test_got_bcd),
+        .test_bcd_toggle     (test_bcd_toggle_ff),
         .render_buf          (~fb_display_ff),
         .wr_req_ff           (fr_wr_req),
         .wr_addr_ff          (fr_wr_addr),
@@ -843,6 +847,29 @@ module test_vga_top #(
             test_toggle_clk_ff <= ~test_toggle_clk_ff;
     end
 
+    // ---- CDC: keypad * on TEST screen (clk) -> kp_test_start_ui (ui_clk) ----
+    reg  kp_test_toggle_ff;
+    always @(posedge clk) begin
+        if (!rst_sync_n)
+            kp_test_toggle_ff <= 1'b0;
+        else if (nav_go && nav_mode_sel == 2'd0)
+            kp_test_toggle_ff <= ~kp_test_toggle_ff;
+    end
+
+    reg kp_test_meta_ff, kp_test_sync_ff, kp_test_prev_ff;
+    always @(posedge ui_clk) begin
+        if (ui_clk_sync_rst) begin
+            kp_test_meta_ff <= 1'b0;
+            kp_test_sync_ff <= 1'b0;
+            kp_test_prev_ff <= 1'b0;
+        end else begin
+            kp_test_meta_ff <= kp_test_toggle_ff;
+            kp_test_sync_ff <= kp_test_meta_ff;
+            kp_test_prev_ff <= kp_test_sync_ff;
+        end
+    end
+    wire kp_test_start_ui = kp_test_sync_ff ^ kp_test_prev_ff;
+
     reg test_tog_meta_ff, test_tog_sync_ff, test_tog_prev_ff;
     always @(posedge ui_clk) begin
         if (ui_clk_sync_rst) begin
@@ -855,7 +882,7 @@ module test_vga_top #(
             test_tog_prev_ff <= test_tog_sync_ff;
         end
     end
-    wire test_start_ui = test_tog_sync_ff ^ test_tog_prev_ff;
+    wire test_start_ui = (test_tog_sync_ff ^ test_tog_prev_ff) | kp_test_start_ui;
 
     // ---- CDC: btnc_pulse (clk) -> browse_step_ui (ui_clk) via toggle ----
     reg  browse_toggle_clk_ff;
@@ -1172,6 +1199,70 @@ module test_vga_top #(
                 test_p_b0_ff   <= test_dbg_p_b0;
             end
         end
+    end
+
+    // =======================================================================
+    // Test done for navigation — clears on test start, sets on completion
+    // =======================================================================
+    reg test_done_for_nav_ff;
+    always @(posedge clk) begin
+        if (!rst_sync_n)
+            test_done_for_nav_ff <= 1'b0;
+        else if (nav_go && nav_mode_sel == 2'd0)
+            test_done_for_nav_ff <= 1'b0;
+        else if (test_done_clk_meta && !test_done_clk_ff)
+            test_done_for_nav_ff <= 1'b1;
+    end
+
+    // Mux done signal: test mode uses test checker, others use mode_fsm
+    wire effective_done = (latched_mode_ff == 2'd0) ? test_done_for_nav_ff : done;
+
+    // =======================================================================
+    // Test results BCD converters (clk domain)
+    // Convert expected/got values to 9-digit BCD for VGA display.
+    // Triggered on test_done rising edge (same time as result latching).
+    // =======================================================================
+    // Delay BCD start by one cycle so test_exp_clk_ff/test_got_clk_ff
+    // have been latched before the converter samples them.
+    reg test_bcd_start_d_ff;
+    always @(posedge clk) begin
+        if (!rst_sync_n)
+            test_bcd_start_d_ff <= 1'b0;
+        else
+            test_bcd_start_d_ff <= test_done_clk_meta && !test_done_clk_ff;
+    end
+    wire test_bcd_start = test_bcd_start_d_ff;
+
+    wire [35:0] test_exp_bcd;
+    wire        test_exp_bcd_valid;
+
+    bin_to_bcd9 u_test_exp_bcd (
+        .clk       (clk),
+        .rst       (~rst_sync_n),
+        .bin_in    (test_exp_clk_ff),
+        .start     (test_bcd_start),
+        .bcd_out_ff(test_exp_bcd),
+        .valid_ff  (test_exp_bcd_valid)
+    );
+
+    wire [35:0] test_got_bcd;
+
+    bin_to_bcd9 u_test_got_bcd (
+        .clk       (clk),
+        .rst       (~rst_sync_n),
+        .bin_in    (test_got_clk_ff),
+        .start     (test_bcd_start),
+        .bcd_out_ff(test_got_bcd),
+        .valid_ff  ()
+    );
+
+    // Toggle when test BCD conversion completes (for frame_renderer trigger)
+    reg test_bcd_toggle_ff;
+    always @(posedge clk) begin
+        if (!rst_sync_n)
+            test_bcd_toggle_ff <= 1'b0;
+        else if (test_exp_bcd_valid)
+            test_bcd_toggle_ff <= ~test_bcd_toggle_ff;
     end
 
     // =======================================================================

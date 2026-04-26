@@ -87,6 +87,7 @@ module test_prime_checker #(
     reg [WIDTH-1:0]  cur_k_ff;          // current k value
     reg [26:0]       addr_minus_ff;     // next DDR2 read address for minus
     reg [26:0]       addr_plus_ff;      // next DDR2 read address for plus
+    reg [WIDTH-1:0]  last_prime_ff;     // last successfully matched prime
 
     // -----------------------------------------------------------------------
     // Next-state signals
@@ -104,6 +105,7 @@ module test_prime_checker #(
     reg [6:0]        next_match_count;
     reg [WIDTH-1:0]  next_expected;
     reg [WIDTH-1:0]  next_got;
+    reg [WIDTH-1:0]  next_last_prime;
     reg              next_rd_req;
     reg [26:0]       next_rd_addr;
 
@@ -139,6 +141,7 @@ module test_prime_checker #(
         next_match_count = match_count_ff;
         next_expected    = expected_ff;
         next_got         = got_ff;
+        next_last_prime  = last_prime_ff;
         next_rd_req      = 1'b0;
         next_rd_addr     = rd_addr_ff;
 
@@ -156,6 +159,7 @@ module test_prime_checker #(
             next_match_count = 7'd0;
             next_expected    = {WIDTH{1'b0}};
             next_got         = {WIDTH{1'b0}};
+            next_last_prime  = {WIDTH{1'b0}};
             next_rd_addr     = 27'd0;
         end else begin
             case (state_ff)
@@ -172,6 +176,7 @@ module test_prime_checker #(
                         next_match_count = 7'd0;
                         next_expected    = {WIDTH{1'b0}};
                         next_got         = {WIDTH{1'b0}};
+                        next_last_prime  = {WIDTH{1'b0}};
                         // Start by reading the first minus bitmap word
                         next_rd_req      = 1'b1;
                         next_rd_addr     = BASE_MINUS;
@@ -230,6 +235,7 @@ module test_prime_checker #(
                     if (rom_expected == {{WIDTH-2{1'b0}}, 2'd2}) begin
                         next_match_count = match_count_ff + 7'd1;
                         next_rom_idx     = rom_idx_ff + 7'd1;
+                        next_last_prime  = {{WIDTH-2{1'b0}}, 2'd2};
                         next_state       = S_CHECK_3;
                     end else begin
                         next_expected = rom_expected;
@@ -242,6 +248,7 @@ module test_prime_checker #(
                     if (rom_expected == {{WIDTH-2{1'b0}}, 2'd3}) begin
                         next_match_count = match_count_ff + 7'd1;
                         next_rom_idx     = rom_idx_ff + 7'd1;
+                        next_last_prime  = {{WIDTH-2{1'b0}}, 2'd3};
                         next_state       = S_SCAN_MINUS;
                     end else begin
                         next_expected = rom_expected;
@@ -257,6 +264,7 @@ module test_prime_checker #(
                         if (rom_expected == prime_km1) begin
                             next_match_count = match_count_ff + 7'd1;
                             next_rom_idx     = rom_idx_ff + 7'd1;
+                            next_last_prime  = prime_km1;
                             // Check if we've matched all ROM primes
                             if (rom_idx_ff == NUM_PRIMES - 1)
                                 next_state = S_PASS;
@@ -264,7 +272,7 @@ module test_prime_checker #(
                                 next_state = S_SCAN_PLUS;
                         end else begin
                             next_expected = rom_expected;
-                            next_got      = prime_km1;
+                            next_got      = last_prime_ff;
                             next_state    = S_FAIL;
                         end
                     end else begin
@@ -280,13 +288,14 @@ module test_prime_checker #(
                         if (rom_expected == prime_kp1) begin
                             next_match_count = match_count_ff + 7'd1;
                             next_rom_idx     = rom_idx_ff + 7'd1;
+                            next_last_prime  = prime_kp1;
                             if (rom_idx_ff == NUM_PRIMES - 1)
                                 next_state = S_PASS;
                             else
                                 next_state = S_ADVANCE_K;
                         end else begin
                             next_expected = rom_expected;
-                            next_got      = prime_kp1;
+                            next_got      = last_prime_ff;
                             next_state    = S_FAIL;
                         end
                     end else begin
@@ -298,12 +307,12 @@ module test_prime_checker #(
                 // ---- Advance to next k value ----
                 S_ADVANCE_K: begin
                     if (bit_idx_ff == 7'd127) begin
-                        // Need next 128-bit word from each bitmap
-                        next_bit_idx = 7'd0;
-                        next_cur_k   = cur_k_ff + {{WIDTH-1{1'b0}}, 1'b1};
-                        next_rd_req  = 1'b1;
-                        next_rd_addr = addr_minus_ff;
-                        next_state   = S_RD_MINUS;
+                        // First 128-bit word covers k=1..128 (primes up to 769).
+                        // All 100 ROM primes (up to 541) fit in this word.
+                        // If we haven't matched all primes by now, fail.
+                        next_expected = rom_expected;
+                        next_got      = last_prime_ff;
+                        next_state    = S_FAIL;
                     end else begin
                         next_bit_idx = bit_idx_ff + 7'd1;
                         next_cur_k   = cur_k_ff + {{WIDTH-1{1'b0}}, 1'b1};
@@ -344,6 +353,7 @@ module test_prime_checker #(
         match_count_ff <= next_match_count;
         expected_ff    <= next_expected;
         got_ff         <= next_got;
+        last_prime_ff  <= next_last_prime;
         rd_req_ff      <= next_rd_req;
         rd_addr_ff     <= next_rd_addr;
     end
