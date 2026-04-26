@@ -10,6 +10,7 @@ module elapsed_timer #(
 ) (
     input  wire        clk,
     input  wire        rst_n,
+    input  wire        restart,        // pulse to reset all counters to 0
     input  wire        freeze,
     output reg  [31:0] cycle_count_ff,
     output reg  [31:0] seconds_ff,
@@ -44,8 +45,14 @@ module elapsed_timer #(
             next_cycle_count = 32'd0;
             next_seconds     = 32'd0;
             next_second_tick = 1'b0;
+        end else if (restart) begin
+            // Restart: reset all counters (higher priority than freeze)
+            next_tick_cnt    = {TICK_BITS{1'b0}};
+            next_cycle_count = 32'd0;
+            next_seconds     = 32'd0;
+            next_second_tick = 1'b0;
         end else if (freeze) begin
-            // Freeze has highest priority after reset: hold all counters
+            // Freeze: hold all counters
             next_tick_cnt    = tick_cnt_ff;
             next_cycle_count = cycle_count_ff;
             next_seconds     = seconds_ff;

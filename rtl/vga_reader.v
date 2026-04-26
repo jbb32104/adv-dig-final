@@ -27,10 +27,11 @@
 
 module vga_reader #(
     parameter [26:0] FB_A              = 27'h050_0000,
-    parameter [26:0] FB_B              = 27'h050_A000,
+    parameter [26:0] FB_B              = 27'h052_2000,
     parameter [5:0]  WORDS_PER_SCANLINE = 6'd40,     // 640 px / 16 px per word
     parameter [5:0]  LINE0_HEIGHT      = 6'd32,
-    parameter [5:0]  LINE12_HEIGHT     = 6'd16
+    parameter [5:0]  LINE1X_HEIGHT     = 6'd16,
+    parameter [3:0]  NUM_1X_LINES      = 4'd11       // lines 1-11
 ) (
     input  wire        ui_clk,
     input  wire        rst_n,
@@ -59,9 +60,9 @@ module vga_reader #(
     input  wire         fifo_wr_rst_busy
 );
 
-    // Total 128-bit words per frame
-    localparam [12:0] WORDS_PER_FRAME =
-        (LINE0_HEIGHT + LINE12_HEIGHT + LINE12_HEIGHT) * WORDS_PER_SCANLINE;
+    // Total 128-bit words per frame: line0 (32 rows) + 11 lines (16 rows each)
+    localparam [13:0] WORDS_PER_FRAME =
+        (LINE0_HEIGHT + NUM_1X_LINES * LINE1X_HEIGHT) * WORDS_PER_SCANLINE;
 
     // -----------------------------------------------------------------------
     // Registered state
@@ -69,7 +70,7 @@ module vga_reader #(
     reg        vs_meta_ff, vs_sync_ff, vs_prev_ff;
     reg        fb_sel_latched_ff;
     reg [1:0]  state_ff;
-    reg [12:0] word_cnt_ff;
+    reg [13:0] word_cnt_ff;
     reg [26:0] rd_addr_ff;
 
     // -----------------------------------------------------------------------
@@ -87,7 +88,7 @@ module vga_reader #(
     reg        vs_rising;
     reg        fb_sel_latched_next;
     reg [1:0]  state_next;
-    reg [12:0] word_cnt_next;
+    reg [13:0] word_cnt_next;
     reg [26:0] rd_addr_next;
     reg        vga_rd_req_next;
     reg [26:0] vga_rd_addr_next;
@@ -113,7 +114,7 @@ module vga_reader #(
 
         if (!rst_n) begin
             state_next          = S_WAIT_VS;
-            word_cnt_next       = 13'd0;
+            word_cnt_next       = 14'd0;
             rd_addr_next        = FB_A;
             vga_rd_req_next     = 1'b0;
             vga_rd_addr_next    = FB_A;
@@ -134,7 +135,7 @@ module vga_reader #(
                     vga_rd_req_next = 1'b0;
                     if (vs_rising) begin
                         fb_sel_latched_next = fb_select;
-                        word_cnt_next       = 13'd0;
+                        word_cnt_next       = 14'd0;
                         rd_addr_next        = fb_select ? FB_B : FB_A;
                         state_next          = S_IDLE;
                     end
@@ -156,7 +157,7 @@ module vga_reader #(
                     if (vga_rd_grant) begin
                         vga_rd_req_next = 1'b0;
                         rd_addr_next    = rd_addr_ff + 27'd16;
-                        word_cnt_next   = word_cnt_ff + 13'd1;
+                        word_cnt_next   = word_cnt_ff + 14'd1;
                         state_next      = S_DATA;
                     end
                 end

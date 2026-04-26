@@ -22,7 +22,9 @@
 //
 // Clock domain: clk (100 MHz, same as mode_fsm).
 
-module keypad_nav (
+module keypad_nav #(
+    parameter COOLDOWN_CYCLES = 25_000_000  // 250 ms at 100 MHz
+) (
     input  wire        clk,
     input  wire        rst,
 
@@ -51,7 +53,8 @@ module keypad_nav (
         SCR_SINGLE  = 3'd3,
         SCR_TEST    = 3'd4,
         SCR_LOADING = 3'd5,
-        SCR_RESULTS = 3'd6;
+        SCR_RESULTS = 3'd6,
+        SCR_TLOAD   = 3'd7;   // time-mode loading (countdown display)
 
     // Button codes (from row_reader encoding)
     localparam [3:0]
@@ -66,6 +69,7 @@ module keypad_nav (
     // Registered state
     // -----------------------------------------------------------------------
     reg        bv_prev_ff;
+    reg [24:0] cooldown_ff;   // press cooldown counter
 
     // -----------------------------------------------------------------------
     // Combinational next-state signals
@@ -77,12 +81,14 @@ module keypad_nav (
     reg        bv_rising;
     reg        digit_press_next;
     reg [3:0]  digit_value_next;
+    reg [24:0] cooldown_next;
 
     // -----------------------------------------------------------------------
     // Combinational next-state logic (including reset)
     // -----------------------------------------------------------------------
     always @(*) begin
-        bv_rising = button_valid && !bv_prev_ff;
+        // Rising edge of button_valid, suppressed during cooldown
+        bv_rising = button_valid && !bv_prev_ff && (cooldown_ff == 25'd0);
 
         if (rst) begin
             screen_id_next   = SCR_HOME;
@@ -91,6 +97,7 @@ module keypad_nav (
             bv_prev_next     = 1'b0;
             digit_press_next = 1'b0;
             digit_value_next = 4'd0;
+            cooldown_next    = 25'd0;
         end else begin
             // Defaults: hold
             screen_id_next   = screen_id_ff;
@@ -100,14 +107,20 @@ module keypad_nav (
             digit_press_next = 1'b0;
             digit_value_next = 4'd0;
 
-            // Auto-transition: LOADING -> RESULTS when mode_fsm is done
-            if (screen_id_ff == SCR_LOADING && mode_done) begin
+            // Cooldown: count down to 0
+            if (cooldown_ff != 25'd0)
+                cooldown_next = cooldown_ff - 25'd1;
+            else
+                cooldown_next = 25'd0;
+
+            // Auto-transition: LOADING/TLOAD -> RESULTS when mode_fsm is done
+            if ((screen_id_ff == SCR_LOADING || screen_id_ff == SCR_TLOAD) && mode_done) begin
                 screen_id_next = SCR_RESULTS;
             end
 
             // Keypad press handling (rising edge of button_valid only)
-            // LOADING screen ignores all input — wait for mode_done.
-            if (bv_rising && screen_id_ff != SCR_LOADING) begin
+            // LOADING screens ignore all input — wait for mode_done.
+            if (bv_rising && screen_id_ff != SCR_LOADING && screen_id_ff != SCR_TLOAD) begin
 
                 // 0-9 digit entry on mode screens with numeric input
                 if (button <= 4'h9 &&
@@ -134,7 +147,7 @@ module keypad_nav (
                         if (button == BTN_HASH) begin
                             screen_id_next = SCR_HOME;
                         end else if (button == BTN_STAR) begin
-                            screen_id_next = SCR_LOADING;
+                            screen_id_next = (screen_id_ff == SCR_TIME) ? SCR_TLOAD : SCR_LOADING;
                             go_next        = 1'b1;
                             case (screen_id_ff)
                                 SCR_NMAX:   mode_sel_next = 2'd1;
@@ -155,6 +168,9 @@ module keypad_nav (
                     default: ;
 
                 endcase
+
+                // Start cooldown after any accepted press
+                cooldown_next = COOLDOWN_CYCLES[24:0];
             end
         end
     end
@@ -169,6 +185,7 @@ module keypad_nav (
         bv_prev_ff     <= bv_prev_next;
         digit_press_ff <= digit_press_next;
         digit_value_ff <= digit_value_next;
+        cooldown_ff    <= cooldown_next;
     end
 
 endmodule

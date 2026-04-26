@@ -54,13 +54,15 @@ module mode_fsm #(
     input  wire             acc_minus_flush_done,
     input  wire             acc_minus_fifo_full,
     // elapsed_timer interface
+    output reg              timer_restart_ff,
     output reg              timer_freeze_ff,
     input  wire [31:0]      seconds_ff,
     input  wire [31:0]      cycle_count_ff,
     // Status outputs
     output reg              done_ff,
     output reg              is_prime_result_ff,
-    output reg  [3:0]       state_out_ff
+    output reg  [3:0]       state_out_ff,
+    output wire [31:0]      t_limit_out
 );
 
     // State encoding (4-bit, 10 states)
@@ -95,8 +97,13 @@ module mode_fsm #(
     reg [WIDTH-1:0] isprime_candidate_ff;
     reg             isprime_waiting_ff;
 
+    // Expose latched t_limit for countdown display
+    assign t_limit_out = t_limit_ff;
+
     // Flush tracking
     reg             flush_sent_ff;      // 1 after flush pulsed to both accumulators
+    reg             flush_plus_done_ff; // latched: plus accumulator flush complete
+    reg             flush_minus_done_ff;// latched: minus accumulator flush complete
 
     // Combinational next-state signals
     reg [3:0]       next_state;
@@ -113,6 +120,8 @@ module mode_fsm #(
     reg [WIDTH-1:0] next_isprime_candidate;
     reg             next_isprime_waiting;
     reg             next_flush_sent;
+    reg             next_flush_plus_done;
+    reg             next_flush_minus_done;
     reg             next_eng_plus_start;
     reg [WIDTH-1:0] next_eng_plus_candidate;
     reg             next_eng_minus_start;
@@ -123,6 +132,7 @@ module mode_fsm #(
     reg             next_acc_minus_valid;
     reg             next_acc_minus_is_prime;
     reg             next_acc_minus_flush;
+    reg             next_timer_restart;
     reg             next_timer_freeze;
     reg             next_done;
     reg             next_is_prime_result;
@@ -149,12 +159,15 @@ module mode_fsm #(
         next_isprime_candidate = isprime_candidate_ff;
         next_isprime_waiting   = isprime_waiting_ff;
         next_flush_sent        = flush_sent_ff;
+        next_flush_plus_done   = flush_plus_done_ff;
+        next_flush_minus_done  = flush_minus_done_ff;
         next_eng_plus_candidate  = eng_plus_candidate_ff;
         next_eng_minus_candidate = eng_minus_candidate_ff;
         next_timer_freeze      = timer_freeze_ff;
         next_done              = done_ff;
         next_is_prime_result   = is_prime_result_ff;
         // Pulse signals default to 0
+        next_timer_restart     = 1'b0;
         next_eng_plus_start    = 1'b0;
         next_eng_minus_start   = 1'b0;
         next_acc_plus_valid    = 1'b0;
@@ -179,8 +192,11 @@ module mode_fsm #(
             next_isprime_candidate   = {WIDTH{1'b0}};
             next_isprime_waiting     = 1'b0;
             next_flush_sent          = 1'b0;
+            next_flush_plus_done     = 1'b0;
+            next_flush_minus_done    = 1'b0;
             next_eng_plus_candidate  = {WIDTH{1'b0}};
             next_eng_minus_candidate = {WIDTH{1'b0}};
+            next_timer_restart       = 1'b0;
             next_timer_freeze        = 1'b0;
             next_done                = 1'b0;
             next_is_prime_result     = 1'b0;
@@ -195,6 +211,9 @@ module mode_fsm #(
                 end
 
                 MODE_SELECT: begin
+                    // Restart timer here (1 cycle before *_ENTRY) so seconds_ff
+                    // is guaranteed to be 0 by the time PRIME_RUN evaluates it.
+                    next_timer_restart = 1'b1;
                     case (mode_sel_ff)
                         2'd1: begin
                             next_n_limit = n_limit;
@@ -223,6 +242,8 @@ module mode_fsm #(
                     next_minus_exhausted = 1'b0;
                     next_timed_out       = 1'b0;
                     next_flush_sent      = 1'b0;
+                    next_flush_plus_done = 1'b0;
+                    next_flush_minus_done = 1'b0;
                     next_done            = 1'b0;
                     next_timer_freeze    = 1'b0;
                     next_state           = PRIME_RUN;
@@ -237,6 +258,8 @@ module mode_fsm #(
                     next_minus_exhausted = 1'b0;
                     next_timed_out       = 1'b0;
                     next_flush_sent      = 1'b0;
+                    next_flush_plus_done = 1'b0;
+                    next_flush_minus_done = 1'b0;
                     next_done            = 1'b0;
                     next_timer_freeze    = 1'b0;
                     next_state           = PRIME_RUN;
@@ -310,8 +333,14 @@ module mode_fsm #(
                         next_acc_minus_flush = 1'b1;
                         next_flush_sent      = 1'b1;
                     end else begin
-                        // Wait for both flush_done acknowledgements (one cycle after flush arrives)
-                        if (acc_plus_flush_done && acc_minus_flush_done) begin
+                        // Latch each flush_done independently — they may
+                        // arrive on different cycles depending on fill level.
+                        if (acc_plus_flush_done)
+                            next_flush_plus_done = 1'b1;
+                        if (acc_minus_flush_done)
+                            next_flush_minus_done = 1'b1;
+                        // Advance once both have completed
+                        if (next_flush_plus_done && next_flush_minus_done) begin
                             next_state = PRIME_DONE;
                             next_done  = 1'b1;
                         end
@@ -391,6 +420,8 @@ module mode_fsm #(
         isprime_candidate_ff   <= next_isprime_candidate;
         isprime_waiting_ff     <= next_isprime_waiting;
         flush_sent_ff          <= next_flush_sent;
+        flush_plus_done_ff     <= next_flush_plus_done;
+        flush_minus_done_ff    <= next_flush_minus_done;
         eng_plus_start_ff      <= next_eng_plus_start;
         eng_plus_candidate_ff  <= next_eng_plus_candidate;
         eng_minus_start_ff     <= next_eng_minus_start;
@@ -401,6 +432,7 @@ module mode_fsm #(
         acc_minus_valid_ff     <= next_acc_minus_valid;
         acc_minus_is_prime_ff  <= next_acc_minus_is_prime;
         acc_minus_flush_ff     <= next_acc_minus_flush;
+        timer_restart_ff       <= next_timer_restart;
         timer_freeze_ff        <= next_timer_freeze;
         done_ff                <= next_done;
         is_prime_result_ff     <= next_is_prime_result;

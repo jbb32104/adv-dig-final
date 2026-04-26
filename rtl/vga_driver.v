@@ -33,12 +33,23 @@ module vga_driver (
     //==================//
     //    PARAMETERS    //
     //==================//
-    // Text line y-positions (fixed for now, will be CDC'd registers later)
-    localparam LINE0_Y_START  = 10'd64;   // 4 char heights from top
-    localparam LINE0_HEIGHT   = 10'd32;   // 2x height for title line
-    localparam LINE1_Y_START  = 10'd288;  // 3 char heights above line 2
-    localparam LINE2_Y_START  = 10'd352;  // 22 char heights from top
-    localparam LINE12_HEIGHT  = 10'd16;   // normal height for lines 1-2
+    // Text line Y-positions — 12 lines total.
+    // Line 0 is 2x scale (32 px tall). Lines 1-11 are 1x (16 px tall).
+    // Spacing: 8 px gap between adjacent lines.
+    localparam LINE0_Y_START   = 10'd24;
+    localparam LINE0_HEIGHT    = 10'd32;
+    localparam LINE1_Y_START   = 10'd64;
+    localparam LINE2_Y_START   = 10'd88;
+    localparam LINE3_Y_START   = 10'd112;
+    localparam LINE4_Y_START   = 10'd136;
+    localparam LINE5_Y_START   = 10'd160;
+    localparam LINE6_Y_START   = 10'd184;
+    localparam LINE7_Y_START   = 10'd208;
+    localparam LINE8_Y_START   = 10'd232;
+    localparam LINE9_Y_START   = 10'd256;
+    localparam LINE10_Y_START  = 10'd280;
+    localparam LINE11_Y_START  = 10'd304;
+    localparam LINE1X_HEIGHT   = 10'd16;   // normal height for lines 1-11
 
     // Sprite glyph dimensions (before border expansion)
     localparam [9:0] GLYPH_W     = 10'd192;  // 12 chars x 16 px (2x)
@@ -132,12 +143,26 @@ module vga_driver (
     reg        spr_fg;
     reg [3:0]  spr_r, spr_g, spr_b;
 
+    reg in_line3, in_line4, in_line5, in_line6, in_line7;
+    reg in_line8, in_line9, in_line10, in_line11;
+
     always @(*) begin
-        // Text line detection
-        in_line0 = (y_in >= LINE0_Y_START) && (y_in < LINE0_Y_START + LINE0_HEIGHT);
-        in_line1 = (y_in >= LINE1_Y_START) && (y_in < LINE1_Y_START + LINE12_HEIGHT);
-        in_line2 = (y_in >= LINE2_Y_START) && (y_in < LINE2_Y_START + LINE12_HEIGHT);
-        in_text_line  = in_line0 || in_line1 || in_line2;
+        // Text line detection — 12 lines
+        in_line0  = (y_in >= LINE0_Y_START)  && (y_in < LINE0_Y_START  + LINE0_HEIGHT);
+        in_line1  = (y_in >= LINE1_Y_START)  && (y_in < LINE1_Y_START  + LINE1X_HEIGHT);
+        in_line2  = (y_in >= LINE2_Y_START)  && (y_in < LINE2_Y_START  + LINE1X_HEIGHT);
+        in_line3  = (y_in >= LINE3_Y_START)  && (y_in < LINE3_Y_START  + LINE1X_HEIGHT);
+        in_line4  = (y_in >= LINE4_Y_START)  && (y_in < LINE4_Y_START  + LINE1X_HEIGHT);
+        in_line5  = (y_in >= LINE5_Y_START)  && (y_in < LINE5_Y_START  + LINE1X_HEIGHT);
+        in_line6  = (y_in >= LINE6_Y_START)  && (y_in < LINE6_Y_START  + LINE1X_HEIGHT);
+        in_line7  = (y_in >= LINE7_Y_START)  && (y_in < LINE7_Y_START  + LINE1X_HEIGHT);
+        in_line8  = (y_in >= LINE8_Y_START)  && (y_in < LINE8_Y_START  + LINE1X_HEIGHT);
+        in_line9  = (y_in >= LINE9_Y_START)  && (y_in < LINE9_Y_START  + LINE1X_HEIGHT);
+        in_line10 = (y_in >= LINE10_Y_START) && (y_in < LINE10_Y_START + LINE1X_HEIGHT);
+        in_line11 = (y_in >= LINE11_Y_START) && (y_in < LINE11_Y_START + LINE1X_HEIGHT);
+        in_text_line  = in_line0 || in_line1 || in_line2 || in_line3 ||
+                        in_line4 || in_line5 || in_line6 || in_line7 ||
+                        in_line8 || in_line9 || in_line10 || in_line11;
         in_text_pixel = video_on_in && in_text_line;
 
         // Pixel selection from 16-bit FIFO word
