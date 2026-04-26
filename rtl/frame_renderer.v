@@ -47,6 +47,10 @@ module frame_renderer #(
     input  wire [31:0] input_bcd,       // latched user input in BCD (8 digits)
     input  wire [31:0] countdown_bcd,   // remaining seconds in BCD (4 digits, time mode)
 
+    // Latched mode selector (clk domain — CDC'd internally)
+    // 0=test, 1=nmax, 2=timer, 3=single
+    input  wire [1:0]  mode_sel,
+
     // Stopwatch BCD for results time display (clk domain — CDC'd internally)
     // Format: {seconds[31:16], fractional[15:0]} — upper 4 digits = seconds
     input  wire [31:0] stopwatch_bcd,
@@ -97,6 +101,9 @@ module frame_renderer #(
     reg [31:0] ibcd_meta_ff, ibcd_sync_ff;   // input BCD (latched)
     reg [31:0] cbcd_meta_ff, cbcd_sync_ff;   // countdown BCD (time mode)
 
+    // Mode selector CDC
+    reg [1:0]  mode_meta_ff, mode_sync_ff;
+
     // Stopwatch BCD CDC
     reg [31:0] swbcd_meta_ff, swbcd_sync_ff;
 
@@ -106,6 +113,8 @@ module frame_renderer #(
     reg        rdone_rendered_ff;
 
     always @(posedge ui_clk) begin
+        mode_meta_ff  <= mode_sel;
+        mode_sync_ff  <= mode_meta_ff;
         bcd_meta_ff   <= bcd_digits;
         bcd_sync_ff   <= bcd_meta_ff;
         cur_meta_ff   <= cursor_pos;
@@ -361,10 +370,24 @@ module frame_renderer #(
         else                          first_nz = 4'd0;
     endfunction
 
+    // Timer results info line: time digits at positions 2-5 (4-digit)
+    // Layout: "T:DDDD SEC #DDDDDDDD"
+    function [3:0] timer_info_t_idx;
+        input [4:0] p;
+        case (p)
+            5'd2: timer_info_t_idx = 4'd3;
+            5'd3: timer_info_t_idx = 4'd2;
+            5'd4: timer_info_t_idx = 4'd1;
+            5'd5: timer_info_t_idx = 4'd0;
+            default: timer_info_t_idx = 4'hF;
+        endcase
+    endfunction
+
     // -----------------------------------------------------------------------
     // Screen / line classification
     // -----------------------------------------------------------------------
     wire is_results_screen = (render_sid_ff == 3'd6);
+    wire mode_is_timer     = (mode_sync_ff == 2'd2);
     wire is_entry_screen   = (render_sid_ff == 3'd1) ||
                              (render_sid_ff == 3'd2) ||
                              (render_sid_ff == 3'd3);
@@ -426,15 +449,30 @@ module frame_renderer #(
 
         // ---- Results info line override (screen 6, line 1) ----
         if (is_results_info_line) begin
-            // N value digits at pos 2-9, prime count digits at pos 12-19
-            if (res_info_n_idx(char_a_pos) != 4'hF) begin
-                dig_en_a  = 1'b1;
-                dig_idx_a = res_info_n_idx(char_a_pos);
+            if (mode_is_timer) begin
+                // Timer mode: T:DDDD SEC #DDDDDDDD
+                // Time digits at positions 2-5 (4-digit from ibcd)
+                if (timer_info_t_idx(char_a_pos) != 4'hF) begin
+                    dig_en_a  = 1'b1;
+                    dig_idx_a = timer_info_t_idx(char_a_pos);
+                end
+                if (timer_info_t_idx(char_b_pos) != 4'hF) begin
+                    dig_en_b  = 1'b1;
+                    dig_idx_b = timer_info_t_idx(char_b_pos);
+                end
+            end else begin
+                // N-max mode: N:DDDDDDDD #DDDDDDDD
+                // N value digits at pos 2-9
+                if (res_info_n_idx(char_a_pos) != 4'hF) begin
+                    dig_en_a  = 1'b1;
+                    dig_idx_a = res_info_n_idx(char_a_pos);
+                end
+                if (res_info_n_idx(char_b_pos) != 4'hF) begin
+                    dig_en_b  = 1'b1;
+                    dig_idx_b = res_info_n_idx(char_b_pos);
+                end
             end
-            if (res_info_n_idx(char_b_pos) != 4'hF) begin
-                dig_en_b  = 1'b1;
-                dig_idx_b = res_info_n_idx(char_b_pos);
-            end
+            // Prime count digits at positions 12-19 (same for both modes)
             if (res_info_cnt_idx(char_a_pos) != 4'hF) begin
                 dig_en_a  = 1'b1;
                 dig_idx_a = res_info_cnt_idx(char_a_pos);
@@ -568,6 +606,52 @@ module frame_renderer #(
     end
 
     // -----------------------------------------------------------------------
+    // Timer mode character overrides (screen 6 in timer mode)
+    // Line 0: title "    TIME RESULTS    " replaces "   N-MAX RESULTS    "
+    // Line 1: info  "T:DDDD SEC #DDDDDDDD" replaces "N:DDDDDDDD #DDDDDDDD"
+    // -----------------------------------------------------------------------
+    wire timer_title_active = mode_is_timer && is_results_screen && is_line0;
+    wire timer_info_active  = mode_is_timer && is_results_info_line;
+
+    reg [6:0] timer_ovr_a, timer_ovr_b;
+    always @(*) begin
+        timer_ovr_a = 7'd0;
+        timer_ovr_b = 7'd0;
+        if (mode_is_timer && is_results_screen) begin
+            if (is_line0) begin
+                // "    TIME RESULTS    " (positions 4-15)
+                case (char_pos_0)
+                    5'd4:  timer_ovr_a = 7'h54; // T
+                    5'd5:  timer_ovr_a = 7'h49; // I
+                    5'd6:  timer_ovr_a = 7'h4D; // M
+                    5'd7:  timer_ovr_a = 7'h45; // E
+                    5'd9:  timer_ovr_a = 7'h52; // R
+                    5'd10: timer_ovr_a = 7'h45; // E
+                    5'd11: timer_ovr_a = 7'h53; // S
+                    5'd12: timer_ovr_a = 7'h55; // U
+                    5'd13: timer_ovr_a = 7'h4C; // L
+                    5'd14: timer_ovr_a = 7'h54; // T
+                    5'd15: timer_ovr_a = 7'h53; // S
+                    default: timer_ovr_a = 7'd0;
+                endcase
+            end else if (line_idx_ff == 4'd1) begin
+                // char_a (even positions): 0=T, 8=E
+                case (char_a_pos)
+                    5'd0:  timer_ovr_a = 7'h54; // T
+                    5'd8:  timer_ovr_a = 7'h45; // E
+                    default: timer_ovr_a = 7'd0;
+                endcase
+                // char_b (odd positions): 7=S, 9=C
+                case (char_b_pos)
+                    5'd7:  timer_ovr_b = 7'h53; // S
+                    5'd9:  timer_ovr_b = 7'h43; // C
+                    default: timer_ovr_b = 7'd0;
+                endcase
+            end
+        end
+    end
+
+    // -----------------------------------------------------------------------
     // Combinational ROM address driving + digit/results override
     // -----------------------------------------------------------------------
     always @(*) begin
@@ -591,6 +675,12 @@ module frame_renderer #(
                 if (is_results_prime_line) begin
                     // Results prime lines: use pre-computed character
                     font_char = res_char_a;
+                end else if (timer_title_active) begin
+                    // Timer mode title: override entire line
+                    font_char = timer_ovr_a;
+                end else if (timer_info_active && timer_ovr_a != 7'd0) begin
+                    // Timer mode info: override static text positions
+                    font_char = timer_ovr_a;
                 end else if (dig_en_a) begin
                     font_char = {3'd0, dig_val_a} + 7'h30;
                 end else begin
@@ -605,6 +695,8 @@ module frame_renderer #(
                 if (!is_line0) begin
                     if (is_results_prime_line) begin
                         font_char = res_char_b;
+                    end else if (timer_info_active && timer_ovr_b != 7'd0) begin
+                        font_char = timer_ovr_b;
                     end else if (dig_en_b) begin
                         font_char = {3'd0, dig_val_b} + 7'h30;
                     end else begin

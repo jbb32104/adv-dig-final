@@ -553,6 +553,10 @@ module test_vga_top #(
     wire [4:0]  results_display_count;
     wire        results_done;
 
+    // For timer mode, force n_limit high so results_bcd always includes 2 and 3.
+    // (n_limit carries the time value in timer mode, which could be < 3.)
+    wire [WIDTH-1:0] results_n_limit = (latched_mode_ff == 2'd2) ? {WIDTH{1'b1}} : n_limit;
+
     results_bcd #(.WIDTH(WIDTH)) u_results_bcd (
         .clk              (clk),
         .rst_n            (rst_sync_n),
@@ -560,7 +564,7 @@ module test_vga_top #(
         .tracker_count    (tracker_count),
         .tracker_data     (tracker_rd_data),
         .tracker_idx_ff   (tracker_rd_idx),
-        .n_limit          (n_limit),
+        .n_limit          (results_n_limit),
         .seconds_bcd      (sw_bcd[31:16]),
         .display_count_ff (results_display_count),
         .done_ff          (results_done),
@@ -598,6 +602,7 @@ module test_vga_top #(
         .bcd_digits          (de_bcd_digits),
         .cursor_pos          (de_cursor_pos),
         .digit_toggle        (de_toggle),
+        .mode_sel            (latched_mode_ff),
         .prime_bcd           (count_bcd),
         .prime_bcd_toggle    (count_bcd_toggle),
         .input_bcd           (latched_bcd_ff),
@@ -860,9 +865,11 @@ module test_vga_top #(
         else if (btnr_pulse) ssd_page_ff <= ssd_page_ff + 2'd1;
     end
 
-    // Stopwatch display condition: loading (5) or results (6) in mode 1 or 3
-    wire ssd_show_stopwatch = (screen_id_ff == 3'd5 || screen_id_ff == 3'd6) &&
-                              (latched_mode_ff == 2'd1 || latched_mode_ff == 2'd3);
+    // Stopwatch display condition: loading/results screens in active modes
+    wire ssd_show_stopwatch = (screen_id_ff == 3'd5 || screen_id_ff == 3'd6 ||
+                               screen_id_ff == 3'd7) &&
+                              (latched_mode_ff == 2'd1 || latched_mode_ff == 2'd2 ||
+                               latched_mode_ff == 2'd3);
 
     reg [31:0] ssd_value;
     reg [7:0]  ssd_dp_en;
