@@ -10,7 +10,9 @@
       "Bash(iverilog -g2001 -t null -I rtl rtl/test_vga_top.v rtl/frame_renderer.v rtl/screen_text_rom.v rtl/font_rom.v rtl/results_bcd.v rtl/bin_to_bcd9.v rtl/prime_tracker.v rtl/keypad_nav.v rtl/digit_entry.v rtl/bcd_to_bin.v rtl/elapsed_timer.v rtl/stopwatch_bcd.v rtl/ssd.v rtl/debounce.v)",
       "Bash(iverilog -t null -Wall -I rtl rtl/bitmap_to_prime.v)",
       "Bash(iverilog -t null -Wall -I rtl rtl/test_prime_checker.v)",
-      "Bash(iverilog -t null -Wall -I rtl rtl/test_vga_top.v)"
+      "Bash(iverilog -t null -Wall -I rtl rtl/test_vga_top.v)",
+      "Bash(xargs grep:*)",
+      "Bash(grep \"\\\\.v$\")"
     ]
   }
 }
