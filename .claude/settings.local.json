@@ -12,7 +12,12 @@
       "Bash(iverilog -t null -Wall -I rtl rtl/test_prime_checker.v)",
       "Bash(iverilog -t null -Wall -I rtl rtl/test_vga_top.v)",
       "Bash(xargs grep:*)",
-      "Bash(grep \"\\\\.v$\")"
+      "Bash(grep \"\\\\.v$\")",
+      "Bash(python find_bad_prime.py)",
+      "Bash(py find_bad_prime.py)",
+      "Read(//c/Users/Jackson/AppData/Local/Programs/**)",
+      "Bash(ls /c/Python*/python.exe)",
+      "Bash(where python:*)"
     ]
   }
 }

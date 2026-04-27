@@ -328,10 +328,10 @@ module vga_driver (
                 pixel_sel_next = 1'b0;
             end else if (in_text_line) begin
                 if (fifo_empty) begin
-                    // FIFO underrun: magenta (visible debug indicator)
-                    vga_r_next = 4'hF;
-                    vga_g_next = 4'h0;
-                    vga_b_next = 4'hF;
+                    // FIFO underrun: output background color (black)
+                    vga_r_next = bg_r;
+                    vga_g_next = bg_g;
+                    vga_b_next = bg_b;
                 end else begin
                     // Text pixel from FIFO
                     vga_r_next     = pixel_r;

@@ -430,7 +430,9 @@ module sd_file_reader #(
     // file content data output (sync with clk)
     output reg        outen,             // when outen=1, a byte of file content is read out from outbyte
     output reg  [7:0] outbyte,            // a byte of file content
-    output reg  [2:0] filesystem_state
+    output reg  [2:0] filesystem_state,
+    // backpressure: when pause=1, do not start new sector reads (stalls at sector boundary)
+    input  wire       pause
 );
 
 
@@ -701,7 +703,7 @@ always @ (posedge clk or negedge rstn)
                 SEARCH_DBR    : read_start <= 1'b1;
                 LS_ROOT_FAT16 : read_start <= 1'b1;
                 LS_ROOT_FAT32 : read_start <= 1'b1;
-                READ_A_FILE   : read_start <= 1'b1;
+                READ_A_FILE   : if (~pause) read_start <= 1'b1;
                 //DONE          : $finish;
             endcase
         end
