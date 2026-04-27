@@ -1107,15 +1107,27 @@ module test_vga_top #(
         .rd_data_valid       (arb_rd_data_valid & test_rd_inflight_ff & !vga_rd_inflight_ff)
     );
 
-    // Test is active from start until done (blocks VGA reader from read port)
+    // Test is active from start until done (blocks VGA reader from read port).
+    // Delay activation until vsync so the current frame finishes cleanly —
+    // avoids a visible flash/tear when VGA reader is disabled mid-frame.
+    //
+    // start takes priority over stale done: done_ff is a level that stays
+    // high from the previous test until the checker processes the new start.
+    // If done had priority, test_pending would never be set on a second run.
     reg test_active_ff;
+    reg test_pending_ff;
     always @(posedge ui_clk) begin
-        if (ui_clk_sync_rst)
-            test_active_ff <= 1'b0;
-        else if (test_start_ui)
-            test_active_ff <= 1'b1;
-        else if (test_done)
-            test_active_ff <= 1'b0;
+        if (ui_clk_sync_rst) begin
+            test_active_ff  <= 1'b0;
+            test_pending_ff <= 1'b0;
+        end else if (test_start_ui) begin
+            test_pending_ff <= 1'b1;
+        end else if (test_pending_ff && vs_sync_top && !vs_prev_top) begin
+            test_active_ff  <= 1'b1;
+            test_pending_ff <= 1'b0;
+        end else if (test_done && !test_pending_ff) begin
+            test_active_ff  <= 1'b0;
+        end
     end
 
     // =======================================================================

@@ -147,13 +147,9 @@ module sd_prime_bridge (
                             // BRAM read starts (data valid next cycle)
                             fifo_rd_ptr <= fifo_rd_ptr + 14'd1;
                             sd_state    <= SD_POP;
-                        end else if (file_done && fifo_wr_ptr != 14'd0) begin
-                            // Re-run: FIFO drained but data exists — rewind
-                            fifo_rd_ptr <= 14'd0;
-                            xfer_eof_sd <= 1'b0;
-                            sd_state    <= SD_WAIT; // 1-cycle BRAM latency
                         end else if (file_done) begin
-                            // No data and file is done -> EOF
+                            // FIFO drained and file complete -> EOF
+                            // Rewind for re-runs is handled by start_pulse_sd.
                             xfer_eof_sd   <= 1'b1;
                             ack_toggle_sd <= ~ack_toggle_sd;
                         end else begin
