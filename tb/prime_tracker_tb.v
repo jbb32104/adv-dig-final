@@ -152,7 +152,7 @@ module prime_tracker_tb;
     );
 
     // -----------------------------------------------------------------------
-    // DUT: prime_tracker — wired exactly as in test_vga_top.v
+    // DUT: prime_tracker — wired exactly as in top.v
     // -----------------------------------------------------------------------
     reg  [5:0]       tracker_rd_idx;
     wire [WIDTH-1:0] tracker_rd_data;
