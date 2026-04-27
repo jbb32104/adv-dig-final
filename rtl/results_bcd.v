@@ -220,7 +220,6 @@ module results_bcd #(
                         next_rd_cnt    = 7'd0;
                         next_cvt_idx   = 5'd0;
                         next_cvt_phase = 2'd0;
-                        next_done      = 1'b0;
                         // Convert at most 20 engine primes for display
                         if (tracker_count > 7'd20)
                             next_cvt_limit = 5'd20;
@@ -367,11 +366,8 @@ module results_bcd #(
                 end
 
                 S_DONE: begin
-                    next_done = 1'b1;
-                    if (start) begin
-                        next_done  = 1'b0;
-                        next_state = S_IDLE;
-                    end
+                    next_done = ~done_ff;  // toggle (not level) so renderer always re-renders
+                    next_state = S_IDLE;
                 end
 
                 default: next_state = S_IDLE;

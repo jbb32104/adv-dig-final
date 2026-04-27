@@ -235,11 +235,13 @@ module frame_renderer #(
     reg [5:0]   word_idx_ff;
     reg [26:0]  addr_ff;
     reg [2:0]   render_sid_ff;
+    reg [1:0]   render_mode_ff;
     reg [2:0]   sid_prev_ff;
     reg         first_ff;
     reg [7:0]   glyph_a_ff;
     reg         cursor_a_ff;
     reg         cursor_b_ff;
+    reg         test_blanking_ff;  // blank screen until test BCD arrives
 
     // Results BCD latches (valid during results line rendering)
     reg [35:0]  left_bcd_ff;     // BCD of left prime for current line
@@ -254,6 +256,7 @@ module frame_renderer #(
     reg [5:0]   word_idx_next;
     reg [26:0]  addr_next;
     reg [2:0]   render_sid_next;
+    reg [1:0]   render_mode_next;
     reg [2:0]   sid_prev_next;
     reg         first_next;
     reg [7:0]   glyph_a_next;
@@ -441,9 +444,9 @@ module frame_renderer #(
     // Screen / line classification
     // -----------------------------------------------------------------------
     wire is_results_screen = (render_sid_ff == 3'd6);
-    wire mode_is_timer     = (mode_sync_ff == 2'd2);
-    wire mode_is_test      = (mode_sync_ff == 2'd0);
-    wire mode_is_single    = (mode_sync_ff == 2'd3);
+    wire mode_is_timer     = (render_mode_ff == 2'd2);
+    wire mode_is_test      = (render_mode_ff == 2'd0);
+    wire mode_is_single    = (render_mode_ff == 2'd3);
     wire is_test_results   = mode_is_test && is_results_screen;
     wire is_single_results = mode_is_single && is_results_screen;
     wire is_entry_screen   = (render_sid_ff == 3'd1) ||
@@ -575,7 +578,11 @@ module frame_renderer #(
         bg_word = {16{BG_COLOR}};
 
         // Per-character foreground: test/single mode uses green/red, else cursor=red, default=white
-        if (is_test_results) begin
+        // When test_blanking_ff is set, force all text invisible (fg = bg) until results arrive.
+        if (test_blanking_ff) begin
+            fg_a = BG_COLOR;
+            fg_b = BG_COLOR;
+        end else if (is_test_results) begin
             fg_a = test_fg_color;
             fg_b = test_fg_color;
         end else if (is_single_results) begin
@@ -587,7 +594,8 @@ module frame_renderer #(
         end
 
         // Line 0 foreground: green/red for test/single results, white otherwise
-        line0_fg = is_test_results  ? test_fg_color   :
+        line0_fg = test_blanking_ff ? BG_COLOR         :
+                   is_test_results  ? test_fg_color    :
                    is_single_results ? single_fg_color : FG_COLOR;
 
         // 2x expanded word: each glyph bit -> 2 adjacent pixels (line 0)
@@ -819,30 +827,21 @@ module frame_renderer #(
                     endcase
                 end
             end else if (line_idx_ff == 4'd2 && !test_pass) begin
-                // " DDR: DDDDDDDDD   "
+                // " COMPOSITE          "
                 case (char_a_pos)
-                    5'd2:  test_ovr_a = 7'h44; // D
-                    5'd4:  test_ovr_a = 7'h3A; // :
-                    default: begin
-                        if (test_dig_idx(char_a_pos) != 4'hF) begin
-                            if (test_dig_idx(char_a_pos) > got_fnz)
-                                test_ovr_a = 7'd0;
-                            else
-                                test_ovr_a = {3'd0, bcd9_val(tgot_sync_ff, test_dig_idx(char_a_pos))} + 7'h30;
-                        end
-                    end
+                    5'd2:  test_ovr_a = 7'h4F; // O
+                    5'd4:  test_ovr_a = 7'h50; // P
+                    5'd6:  test_ovr_a = 7'h53; // S
+                    5'd8:  test_ovr_a = 7'h54; // T
+                    default: test_ovr_a = 7'd0;
                 endcase
                 case (char_b_pos)
-                    5'd1:  test_ovr_b = 7'h44; // D
-                    5'd3:  test_ovr_b = 7'h52; // R
-                    default: begin
-                        if (test_dig_idx(char_b_pos) != 4'hF) begin
-                            if (test_dig_idx(char_b_pos) > got_fnz)
-                                test_ovr_b = 7'd0;
-                            else
-                                test_ovr_b = {3'd0, bcd9_val(tgot_sync_ff, test_dig_idx(char_b_pos))} + 7'h30;
-                        end
-                    end
+                    5'd1:  test_ovr_b = 7'h43; // C
+                    5'd3:  test_ovr_b = 7'h4D; // M
+                    5'd5:  test_ovr_b = 7'h4F; // O
+                    5'd7:  test_ovr_b = 7'h49; // I
+                    5'd9:  test_ovr_b = 7'h45; // E
+                    default: test_ovr_b = 7'd0;
                 endcase
             end
         end
@@ -963,6 +962,7 @@ module frame_renderer #(
             word_idx_next       = 6'd0;
             addr_next           = FB_A;
             render_sid_next     = 3'd0;
+            render_mode_next    = 2'd0;
             sid_prev_next       = 3'd0;
             first_next          = 1'b1;
             glyph_a_next        = 8'd0;
@@ -988,6 +988,7 @@ module frame_renderer #(
         word_idx_next       = word_idx_ff;
         addr_next           = addr_ff;
         render_sid_next     = render_sid_ff;
+        render_mode_next    = render_mode_ff;
         sid_prev_next       = sid_prev_ff;
         first_next          = first_ff;
         glyph_a_next        = glyph_a_ff;
@@ -1017,6 +1018,7 @@ module frame_renderer #(
 
             S_SETUP: begin
                 render_sid_next     = sid_sync_ff;
+                render_mode_next    = mode_sync_ff;
                 sid_prev_next       = sid_sync_ff;
                 dtog_rendered_next  = dtog_sync_ff;
                 ptog_rendered_next  = ptog_sync_ff;
@@ -1159,6 +1161,7 @@ module frame_renderer #(
         word_idx_ff         <= word_idx_next;
         addr_ff             <= addr_next;
         render_sid_ff       <= render_sid_next;
+        render_mode_ff      <= render_mode_next;
         sid_prev_ff         <= sid_prev_next;
         first_ff            <= first_next;
         glyph_a_ff          <= glyph_a_next;
@@ -1175,6 +1178,24 @@ module frame_renderer #(
         left_bcd_ff         <= left_bcd_next;
         right_bcd_ff        <= right_bcd_next;
         rbcd_rd_addr_ff     <= rbcd_rd_addr_next;
+    end
+
+    // -----------------------------------------------------------------------
+    // Test blanking: show black screen until test BCD data arrives.
+    // Set when entering loading screen (5) in test mode; cleared on test_dirty
+    // or when navigating away from loading/results.
+    // -----------------------------------------------------------------------
+    always @(posedge ui_clk) begin
+        if (!rst_n)
+            test_blanking_ff <= 1'b0;
+        else if (test_dirty)
+            test_blanking_ff <= 1'b0;
+        else if (sid_sync_ff != sid_prev_ff) begin
+            if (sid_sync_ff == 3'd5 && mode_sync_ff == 2'd0)
+                test_blanking_ff <= 1'b1;   // entering test loading
+            else
+                test_blanking_ff <= 1'b0;   // any other nav clears it
+        end
     end
 
 endmodule

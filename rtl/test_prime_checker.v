@@ -276,7 +276,7 @@ module test_prime_checker #(
                     end else begin
                         // Bit not set -- SD says prime, DDR2 says not
                         next_expected = cur_prime_ff;
-                        next_got      = {WIDTH{1'b0}};  // DDR2 bitmap = 0
+                        next_got      = {WIDTH{1'b0}};
                         next_state    = S_FAIL;
                     end
                 end
@@ -287,13 +287,15 @@ module test_prime_checker #(
                 end
 
                 S_PASS: begin
-                    next_done = 1'b1;
-                    next_pass = 1'b1;
+                    next_done  = 1'b1;
+                    next_pass  = 1'b1;
+                    next_state = S_IDLE;   // return to idle so next start is accepted
                 end
 
                 S_FAIL: begin
-                    next_done = 1'b1;
-                    next_pass = 1'b0;
+                    next_done  = 1'b1;
+                    next_pass  = 1'b0;
+                    next_state = S_IDLE;   // return to idle so next start is accepted
                 end
 
                 default: next_state = S_IDLE;

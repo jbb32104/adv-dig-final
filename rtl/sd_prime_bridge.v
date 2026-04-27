@@ -83,6 +83,19 @@ module sd_prime_bridge (
             req_sync_sd <= {req_sync_sd[1:0], req_toggle_ui};
     end
 
+    // CDC: ui_clk -> clk_sd start/rewind toggle
+    // Tells the clk_sd side to rewind fifo_rd_ptr to 0 before serving.
+    reg        start_toggle_ui = 1'b0;
+    reg [2:0]  start_sync_sd   = 3'b0;
+    wire       start_pulse_sd  = start_sync_sd[2] ^ start_sync_sd[1];
+
+    always @(posedge clk_sd) begin
+        if (!rst_sd_n)
+            start_sync_sd <= 3'b0;
+        else
+            start_sync_sd <= {start_sync_sd[1:0], start_toggle_ui};
+    end
+
     // =================================================================
     // CDC: clk_sd -> ui_clk ack toggle + data
     // =================================================================
@@ -119,6 +132,14 @@ module sd_prime_bridge (
             xfer_data_sd  <= 32'd0;
             xfer_eof_sd   <= 1'b0;
         end else begin
+            // Rewind on start — always reset read pointer to beginning.
+            // This fires independently of the FSM state so it works even
+            // when the FIFO is not empty (checker stopped early on previous run).
+            if (start_pulse_sd) begin
+                fifo_rd_ptr <= 14'd0;
+                xfer_eof_sd <= 1'b0;
+            end
+
             case (sd_state)
                 SD_IDLE: begin
                     if (req_pulse_sd) begin
@@ -126,6 +147,11 @@ module sd_prime_bridge (
                             // BRAM read starts (data valid next cycle)
                             fifo_rd_ptr <= fifo_rd_ptr + 14'd1;
                             sd_state    <= SD_POP;
+                        end else if (file_done && fifo_wr_ptr != 14'd0) begin
+                            // Re-run: FIFO drained but data exists — rewind
+                            fifo_rd_ptr <= 14'd0;
+                            xfer_eof_sd <= 1'b0;
+                            sd_state    <= SD_WAIT; // 1-cycle BRAM latency
                         end else if (file_done) begin
                             // No data and file is done -> EOF
                             xfer_eof_sd   <= 1'b1;
@@ -165,17 +191,20 @@ module sd_prime_bridge (
     // =================================================================
     // ui_clk side: request/response state machine
     // =================================================================
-    reg req_pending_ff = 1'b0;
-    reg started_ff     = 1'b0;
+    reg req_pending_ff  = 1'b0;
+    reg started_ff      = 1'b0;
+    reg start_defer_ff  = 1'b0;  // defers first req by 1 cycle after rewind
 
     always @(posedge ui_clk) begin
         if (!rst_ui_n) begin
-            req_toggle_ui  <= 1'b0;
-            prime_data     <= 32'd0;
-            prime_valid    <= 1'b0;
-            prime_eof      <= 1'b0;
-            req_pending_ff <= 1'b0;
-            started_ff     <= 1'b0;
+            req_toggle_ui   <= 1'b0;
+            start_toggle_ui <= 1'b0;
+            prime_data      <= 32'd0;
+            prime_valid     <= 1'b0;
+            prime_eof       <= 1'b0;
+            req_pending_ff  <= 1'b0;
+            started_ff      <= 1'b0;
+            start_defer_ff  <= 1'b0;
         end else begin
             // Handle ack from clk_sd side (lowest priority, can be overridden by start)
             if (ack_pulse_ui && req_pending_ff) begin
@@ -188,13 +217,21 @@ module sd_prime_bridge (
                 end
             end
 
+            // Deferred first request: fires 1 cycle after start so the
+            // rewind toggle reaches clk_sd before the first read request.
+            if (start_defer_ff) begin
+                req_toggle_ui  <= ~req_toggle_ui;
+                req_pending_ff <= 1'b1;
+                start_defer_ff <= 1'b0;
+            end
+
             // Handle start (highest priority — overrides in-flight ack)
             if (start) begin
-                req_toggle_ui  <= ~req_toggle_ui;
-                prime_valid    <= 1'b0;
-                prime_eof      <= 1'b0;
-                started_ff     <= 1'b1;
-                req_pending_ff <= 1'b1;
+                start_toggle_ui <= ~start_toggle_ui;  // rewind FIFO rd_ptr
+                prime_valid     <= 1'b0;
+                prime_eof       <= 1'b0;
+                started_ff      <= 1'b1;
+                start_defer_ff  <= 1'b1;              // defer req by 1 cycle
             end
             // Handle consume (only when not already pending)
             else if (consume && started_ff && !req_pending_ff) begin

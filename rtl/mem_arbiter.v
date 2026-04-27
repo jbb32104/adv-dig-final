@@ -31,6 +31,7 @@ module mem_arbiter (
     input  wire         ui_clk,
     input  wire         rst_n,
     input  wire         init_calib_complete,
+    input  wire         bitmap_reset,       // pulse: reset write pointers for new run
 
     // ---- Port 0: VGA read (highest priority) --------------------------------
     input  wire         vga_rd_req,         // pulse: request one 128-bit read
@@ -196,6 +197,13 @@ module mem_arbiter (
                 S_IDLE: begin
                     next_cmd_sent  = 1'b0;
                     next_data_sent = 1'b0;
+
+                    // Reset bitmap write pointers on new computation run.
+                    // Safe here: FIFOs are empty between runs, arbiter is idle.
+                    if (bitmap_reset) begin
+                        next_wr_ptr_plus  = BASE_PLUS;
+                        next_wr_ptr_minus = BASE_MINUS;
+                    end
 
                     if (vga_rd_req) begin
                         // --- VGA read (highest priority) ---

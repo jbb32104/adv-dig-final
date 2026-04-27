@@ -34,6 +34,7 @@ module keypad_nav #(
 
     // mode_fsm status (clk domain)
     input  wire        mode_done,
+    input  wire        primes_ready,       // high after bitmap written to DDR2
 
     // Outputs (clk domain)
     output reg  [2:0]  screen_id_ff,
@@ -132,11 +133,13 @@ module keypad_nav #(
                 end
 
                 // A/B/C/D — navigate between modes from any non-loading screen
+                // When primes_ready is high (bitmap in DDR2), only D (test) is
+                // allowed — user must test before starting a new computation.
                 case (button)
-                    BTN_A: screen_id_next = SCR_NMAX;
-                    BTN_B: screen_id_next = SCR_TIME;
-                    BTN_C: screen_id_next = SCR_SINGLE;
-                    BTN_D: screen_id_next = SCR_TEST;
+                    BTN_A: if (!primes_ready) screen_id_next = SCR_NMAX;
+                    BTN_B: if (!primes_ready) screen_id_next = SCR_TIME;
+                    BTN_C: if (!primes_ready) screen_id_next = SCR_SINGLE;
+                    BTN_D: if (primes_ready) screen_id_next = SCR_TEST;
                     default: ;
                 endcase
 
@@ -159,7 +162,9 @@ module keypad_nav #(
                     end
 
                     SCR_RESULTS: begin
-                        if (button == BTN_HASH) begin
+                        // When primes_ready: user must test first (D key),
+                        // so block # from leaving results.
+                        if (button == BTN_HASH && !primes_ready) begin
                             screen_id_next = SCR_HOME;
                             go_next        = 1'b1;
                         end

@@ -192,6 +192,7 @@ module test_vga_top #(
         .button         (kp_button),
         .button_valid   (kp_button_valid),
         .mode_done      (effective_done),
+        .primes_ready   (has_bitmap_ff),
         .screen_id_ff   (screen_id_ff),
         .mode_sel_ff    (nav_mode_sel),
         .go_ff          (nav_go),
@@ -256,19 +257,38 @@ module test_vga_top #(
     end
 
     // =======================================================================
-    // Prime count total — sum of both engines plus 2 (for primes 2 and 3)
-    // Converted to BCD for live display on loading screen.
+    // Latched N-limit (binary) — captured on go, before digit_entry resets.
+    // Used for conditional prime count (+2/+1/+0) and results_bcd inclusion.
     // =======================================================================
-    wire [31:0] prime_total = prime_count_plus + prime_count_minus + 32'd2;
+    reg [WIDTH-1:0] latched_n_limit_ff;
+    always @(posedge clk) begin
+        if (~rst_sync_n)
+            latched_n_limit_ff <= {WIDTH{1'b0}};
+        else if (nav_go)
+            latched_n_limit_ff <= bin_value;
+    end
+
+    // =======================================================================
+    // Prime count total ��� sum of both engines plus 0/1/2 for primes 2 and 3.
+    // For time mode, n_limit carries the time value; always include 2 and 3.
+    // Converted to BCD for live display on loading and results screens.
+    // =======================================================================
+    wire [WIDTH-1:0] effective_n_limit = (latched_mode_ff == 2'd2) ? {WIDTH{1'b1}}
+                                                                    : latched_n_limit_ff;
+    wire [1:0] hardcoded_prime_adj = (effective_n_limit >= {{WIDTH-2{1'b0}}, 2'd3}) ? 2'd2 :
+                                     (effective_n_limit >= {{WIDTH-2{1'b0}}, 2'd2}) ? 2'd1 : 2'd0;
+    wire [31:0] prime_total = prime_count_plus + prime_count_minus
+                              + {30'd0, hardcoded_prime_adj};
 
     wire [31:0] count_bcd;
     wire        count_bcd_valid;
     wire        count_bcd_toggle;
 
-    // Auto-restart: start on nav_go, re-start on each valid while on loading
-    wire is_loading_scr = (screen_id_ff == 3'd5) || (screen_id_ff == 3'd7);
+    // Auto-restart: start on nav_go, re-start while on loading or results
+    wire is_active_scr = (screen_id_ff == 3'd5) || (screen_id_ff == 3'd6) ||
+                         (screen_id_ff == 3'd7);
     wire count_bcd_start = nav_go ||
-                           (count_bcd_valid && is_loading_scr);
+                           (count_bcd_valid && is_active_scr);
 
     bin_to_bcd u_count_bcd (
         .clk       (clk),
@@ -574,6 +594,7 @@ module test_vga_top #(
 
     prime_accumulator u_acc_plus (
         .clk(clk), .rst_n(rst_sync_n), .rd_clk(ui_clk),
+        .clear(timer_restart),
         .prime_valid(acc_plus_valid), .is_prime(acc_plus_is_prime),
         .flush(acc_plus_flush), .flush_done_ff(acc_plus_flush_done),
         .prime_fifo_rd_en(arb_rd_en_plus), .prime_fifo_rd_data(acc_plus_rd_data),
@@ -582,6 +603,7 @@ module test_vga_top #(
     );
     prime_accumulator u_acc_minus (
         .clk(clk), .rst_n(rst_sync_n), .rd_clk(ui_clk),
+        .clear(timer_restart),
         .prime_valid(acc_minus_valid), .is_prime(acc_minus_is_prime),
         .flush(acc_minus_flush), .flush_done_ff(acc_minus_flush_done),
         .prime_fifo_rd_en(arb_rd_en_minus), .prime_fifo_rd_data(acc_minus_rd_data),
@@ -610,6 +632,28 @@ module test_vga_top #(
         .freeze (timer_freeze),
         .bcd_ff (sw_bcd)
     );
+
+    // =======================================================================
+    // CDC: timer_restart (clk) -> bitmap_reset (ui_clk)
+    // Resets arbiter bitmap write pointers so re-runs start at base address.
+    // Toggle-based CDC to avoid losing the single-cycle pulse.
+    // =======================================================================
+    reg timer_restart_toggle_ff;
+    always @(posedge clk) begin
+        if (!rst_sync_n)
+            timer_restart_toggle_ff <= 1'b0;
+        else if (timer_restart)
+            timer_restart_toggle_ff <= ~timer_restart_toggle_ff;
+    end
+
+    reg [2:0] tr_sync_ui_ff;
+    always @(posedge ui_clk) begin
+        if (ui_clk_sync_rst)
+            tr_sync_ui_ff <= 3'b0;
+        else
+            tr_sync_ui_ff <= {tr_sync_ui_ff[1:0], timer_restart_toggle_ff};
+    end
+    wire bitmap_reset_ui = tr_sync_ui_ff[2] ^ tr_sync_ui_ff[1];
 
     // =======================================================================
     // Prime tracker — circular buffer for last 20 engine-found primes
@@ -678,9 +722,9 @@ module test_vga_top #(
     wire [4:0]  results_display_count;
     wire        results_done;
 
-    // For timer mode, force n_limit high so results_bcd always includes 2 and 3.
-    // (n_limit carries the time value in timer mode, which could be < 3.)
-    wire [WIDTH-1:0] results_n_limit = (latched_mode_ff == 2'd2) ? {WIDTH{1'b1}} : n_limit;
+    // Use effective_n_limit (latched on go, forced high for timer mode)
+    // so results_bcd sees the correct limit even after digit_entry resets.
+    wire [WIDTH-1:0] results_n_limit = effective_n_limit;
 
     results_bcd #(.WIDTH(WIDTH)) u_results_bcd (
         .clk              (clk),
@@ -705,6 +749,19 @@ module test_vga_top #(
             latched_mode_ff <= 2'd0;
         else if (nav_go)
             latched_mode_ff <= nav_mode_sel;
+    end
+
+    // Bitmap written to DDR2 — gates test mode (D key) navigation.
+    // Latches high when mode_fsm completes for N-max or time-limit modes.
+    // Cleared after test mode completes, allowing a new computation run.
+    reg has_bitmap_ff;
+    always @(posedge clk) begin
+        if (~rst_sync_n)
+            has_bitmap_ff <= 1'b0;
+        else if (test_done_clk_meta && !test_done_clk_ff)
+            has_bitmap_ff <= 1'b0;
+        else if (done && (latched_mode_ff == 2'd1 || latched_mode_ff == 2'd2))
+            has_bitmap_ff <= 1'b1;
     end
 
     // =======================================================================
@@ -765,6 +822,7 @@ module test_vga_top #(
         .ui_clk               (ui_clk),
         .rst_n                (arb_rst_n),
         .init_calib_complete  (init_calib_complete),
+        .bitmap_reset         (bitmap_reset_ui),
 
         // Port 0: Read (muxed between VGA reader and test checker)
         .vga_rd_req           (mux_rd_req),
@@ -925,7 +983,7 @@ module test_vga_top #(
         .ui_clk              (ui_clk),
         .rst_n               (arb_rst_n),
         .init_calib_complete (init_calib_complete),
-        .enable              (vga_enable_ff),
+        .enable              (vga_enable_ff && !test_active_ff),
 
         .fb_select           (fb_display_ff),
         .vsync_vga           (vsync),
@@ -1148,14 +1206,16 @@ module test_vga_top #(
 
     wire test_needs_port = test_active_ff && (test_rd_req || test_rd_inflight_ff);
 
-    // ---- Read port mux: test > browse > VGA ----
-    // Request routing uses live priority (combinational).
+    // ---- Read port mux: test > VGA > browse ----
+    // VGA reader is disabled during test mode (enable gated off), so
+    // test gets uncontested DDR2 access. Outside test mode, VGA is the
+    // only requestor and gets full bandwidth.
     wire        mux_rd_req   = test_needs_port ? test_rd_req
-                             : browse_active   ? browse_rd_req_ff
-                             :                   vga_rd_req;
+                             : vga_rd_req      ? 1'b1
+                             :                   browse_rd_req_ff;
     wire [26:0] mux_rd_addr  = test_needs_port ? test_rd_addr
-                             : browse_active   ? browse_addr_ff
-                             :                   vga_rd_addr;
+                             : vga_rd_req      ? vga_rd_addr
+                             :                   browse_addr_ff;
     wire        mux_rd_grant;
 
     // Grant routing must use the CAPTURED owner from when the request
@@ -1177,8 +1237,8 @@ module test_vga_top #(
             // Lock owner on the first cycle a request is presented
             rd_owner_valid_ff <= 1'b1;
             rd_owner_ff       <= test_needs_port ? 2'd1
-                               : browse_active   ? 2'd2
-                               :                   2'd0;
+                               : vga_rd_req      ? 2'd0
+                               :                   2'd2;
         end
     end
 
@@ -1233,60 +1293,9 @@ module test_vga_top #(
     //   show stopwatch as SSSS.FFFF (seconds . ten-thousandths)
     // Otherwise: debug pages cycled by BTNR
     // =======================================================================
-    reg [1:0] ssd_page_ff;
-    always @(posedge clk) begin
-        if (!rst_sync_n)     ssd_page_ff <= 2'd0;
-        else if (btnr_pulse) ssd_page_ff <= ssd_page_ff + 2'd1;
-    end
-
-    // Stopwatch display condition: loading/results screens in active modes
-    wire ssd_show_stopwatch = (screen_id_ff == 3'd5 || screen_id_ff == 3'd6 ||
-                               screen_id_ff == 3'd7) &&
-                              (latched_mode_ff == 2'd1 || latched_mode_ff == 2'd2 ||
-                               latched_mode_ff == 2'd3);
-
-    reg [31:0] ssd_value;
-    reg [7:0]  ssd_dp_en;
-    always @(*) begin
-        ssd_value = 32'd0;
-        ssd_dp_en = 8'h10;
-        if (browse_hd_clk_ff) begin
-            // DDR2 memory browser (pages cycled by BTNR)
-            // Page 0: data[31:0]    Page 1: data[63:32]
-            // Page 2: data[95:64]   Page 3: data[127:96]
-            case (ssd_page_ff)
-                2'd0: ssd_value = br_data0_clk_ff;
-                2'd1: ssd_value = br_data1_clk_ff;
-                2'd2: ssd_value = br_data2_clk_ff;
-                default: ssd_value = br_data3_clk_ff;
-            endcase
-            ssd_dp_en = 8'h01 << ssd_page_ff;
-        end else if (test_done_clk_ff) begin
-            // Test results display (pages cycled by BTNR)
-            // Page 0: match_count (14-bit, zero-extended to 32)
-            // Page 1: (reserved)
-            // Page 2: expected (first mismatch SD prime)
-            // Page 3: got (0 = bit not set in bitmap)
-            case (ssd_page_ff)
-                2'd0: ssd_value = {18'd0, test_mc_clk_ff};
-                2'd1: ssd_value = {18'd0, test_mc_clk_ff};
-                2'd2: ssd_value = {{32-WIDTH{1'b0}}, test_exp_clk_ff};
-                default: ssd_value = {{32-WIDTH{1'b0}}, test_got_clk_ff};
-            endcase
-            ssd_dp_en = 8'h01 << ssd_page_ff;
-        end else if (ssd_show_stopwatch) begin
-            ssd_value = sw_bcd;
-            ssd_dp_en = 8'h10;  // decimal point on digit 4: SSSS.FFFF
-        end else begin
-            case (ssd_page_ff)
-                2'd0: ssd_value = wr_count_plus_ff;
-                2'd1: ssd_value = wr_count_minus_ff;
-                2'd2: ssd_value = prime_count_plus;
-                default: ssd_value = prime_count_minus;
-            endcase
-            ssd_dp_en = 8'h10 << ssd_page_ff;
-        end
-    end
+    // SSD always shows stopwatch timer: SSSS.FFFF
+    wire [31:0] ssd_value = sw_bcd;
+    wire [7:0]  ssd_dp_en = 8'h10;  // decimal point on digit 4
 
     ssd #(
         .CLK_FREQ_HZ (100_000_000),
@@ -1369,14 +1378,17 @@ module test_vga_top #(
     always @(posedge clk) begin
         if (!rst_sync_n)
             test_done_for_nav_ff <= 1'b0;
-        else if (nav_go && nav_mode_sel == 2'd0)
+        else if (nav_go)
             test_done_for_nav_ff <= 1'b0;
         else if (test_done_clk_meta && !test_done_clk_ff)
             test_done_for_nav_ff <= 1'b1;
     end
 
-    // Mux done signal: test mode uses test checker, others use mode_fsm
-    wire effective_done = (latched_mode_ff == 2'd0) ? test_done_for_nav_ff : done;
+    // Mux done signal: test mode uses test checker, others use mode_fsm.
+    // Suppress on nav_go cycle to prevent stale done from triggering an
+    // immediate LOADING->RESULTS auto-transition before mode_fsm clears done.
+    wire effective_done = nav_go ? 1'b0 :
+                          (latched_mode_ff == 2'd0) ? test_done_for_nav_ff : done;
 
     // =======================================================================
     // Test results BCD converters (clk domain)

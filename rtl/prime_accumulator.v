@@ -25,6 +25,8 @@ module prime_accumulator (
     input  wire        rst_n,
     // Read-domain clock (MIG DDR2 ui_clk)
     input  wire        rd_clk,
+    // Soft clear: resets packing state and prime_count (FIFO not reset)
+    input  wire        clear,
     // Write interface: one pulse per engine done_ff
     input  wire        prime_valid,     // pulse on every completed candidate test
     input  wire        is_prime,        // 1 = candidate is prime, 0 = composite
@@ -56,6 +58,22 @@ module prime_accumulator (
     reg [31:0] fifo_write_data;
 
     // -----------------------------------------------------------------------
+    // FIFO reset — held for 8 clk cycles after clear to fully reset both
+    // clock domains.  Prevents stale bitmap data from prior runs.
+    // -----------------------------------------------------------------------
+    reg [3:0] fifo_rst_cnt_ff;
+    wire      fifo_resetting = (fifo_rst_cnt_ff != 4'd0);
+
+    always @(posedge clk) begin
+        if (!rst_n)
+            fifo_rst_cnt_ff <= 4'd0;
+        else if (clear && !fifo_resetting)
+            fifo_rst_cnt_ff <= 4'd8;
+        else if (fifo_resetting)
+            fifo_rst_cnt_ff <= fifo_rst_cnt_ff - 4'd1;
+    end
+
+    // -----------------------------------------------------------------------
     // FIFO IP instantiation
     // -----------------------------------------------------------------------
     wire wr_rst_busy, rd_rst_busy;
@@ -63,7 +81,7 @@ module prime_accumulator (
     prime_fifo_ip u_fifo (
         .wr_clk     (clk),
         .rd_clk     (rd_clk),
-        .rst        (~rst_n),
+        .rst        (~rst_n | fifo_resetting),
         .din        (fifo_write_data),       // 32-bit write side
         .wr_en      (do_fifo_write & ~wr_rst_busy),
         .full       (prime_fifo_full),
@@ -94,7 +112,7 @@ module prime_accumulator (
         do_fifo_write    = 1'b0;
         fifo_write_data  = 32'd0;
 
-        if (!rst_n) begin
+        if (!rst_n || clear) begin
             next_shift_reg   = 32'd0;
             next_bit_count   = 5'd0;
             next_prime_count = 32'd0;
