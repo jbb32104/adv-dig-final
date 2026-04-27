@@ -150,7 +150,7 @@ module results_bcd_tb;
     );
 
     // -------------------------------------------------------------------
-    // prime_tracker — wired exactly as in test_vga_top.v
+    // prime_tracker — wired exactly as in top.v
     // read_idx driven by results_bcd's tracker_idx_ff
     // -------------------------------------------------------------------
     wire [5:0]       tracker_rd_idx;   // driven by results_bcd
@@ -341,7 +341,7 @@ module results_bcd_tb;
         wait_done(200_000);
         $display("  mode_fsm done. tracker_count=%0d", tracker_count);
 
-        // Trigger results_bcd (like done rising edge in test_vga_top)
+        // Trigger results_bcd (like done rising edge in top)
         pulse_rbcd_start;
         $display("  results_bcd started, waiting...");
         wait_rbcd_done(10_000);

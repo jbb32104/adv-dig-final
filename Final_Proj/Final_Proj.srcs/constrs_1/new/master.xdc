@@ -261,5 +261,5 @@ set_clock_groups -asynchronous \
 
 
 set_property PROHIBIT true [get_bels SLICE_X53Y109/D6LUT]
-set_property BITSTREAM.CONFIG.SPI_BUSWIDTH 4 [current_design]
+
 

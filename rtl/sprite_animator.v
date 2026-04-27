@@ -23,7 +23,7 @@ module sprite_animator #(
     parameter [9:0] INIT_Y   = 10'd300
 ) (
     input  wire        clk_vga,
-    input  wire        rst,
+    input  wire        rst_n,
     input  wire        vsync,        // from VGA controller (clk_vga domain)
     input  wire        enable,       // high on screen 0 only
 
@@ -105,7 +105,7 @@ module sprite_animator #(
     // Combinational next-state logic (including reset)
     // -----------------------------------------------------------------------
     always @(*) begin
-        if (rst) begin
+        if (!rst_n) begin
             vs_prev_next      = 1'b0;
             sprite_x_next     = INIT_X;
             sprite_y_next     = INIT_Y;

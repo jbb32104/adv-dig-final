@@ -197,15 +197,17 @@ module mode_fsm #(
             next_eng_plus_candidate  = {WIDTH{1'b0}};
             next_eng_minus_candidate = {WIDTH{1'b0}};
             next_timer_restart       = 1'b0;
-            next_timer_freeze        = 1'b0;
+            next_timer_freeze        = 1'b1;  // frozen until computation starts
             next_done                = 1'b0;
             next_is_prime_result     = 1'b0;
+            next_state_out           = IDLE;
         end else begin
             case (state_ff)
 
                 IDLE: begin
                     if (go) begin
                         next_mode_sel = mode_sel;
+                        next_done     = 1'b0;     // clear stale done from previous run
                         next_state    = MODE_SELECT;
                     end
                 end
@@ -351,9 +353,10 @@ module mode_fsm #(
                     next_done         = 1'b1;
                     next_timer_freeze = 1'b1;
                     if (go) begin
-                        next_state        = IDLE;
-                        next_done         = 1'b0;
-                        next_timer_freeze = 1'b0;
+                        next_state         = IDLE;
+                        next_done          = 1'b0;
+                        next_timer_freeze  = 1'b1;  // stay frozen in IDLE
+                        next_timer_restart = 1'b1;   // clear display to 0
                     end
                 end
 
@@ -386,9 +389,10 @@ module mode_fsm #(
                     next_done         = 1'b1;
                     next_timer_freeze = 1'b1;
                     if (go) begin
-                        next_state        = IDLE;
-                        next_done         = 1'b0;
-                        next_timer_freeze = 1'b0;
+                        next_state         = IDLE;
+                        next_done          = 1'b0;
+                        next_timer_freeze  = 1'b1;  // stay frozen in IDLE
+                        next_timer_restart = 1'b1;   // clear display to 0
                     end
                 end
 

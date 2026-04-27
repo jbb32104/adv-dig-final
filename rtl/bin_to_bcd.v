@@ -17,7 +17,7 @@
 
 module bin_to_bcd (
     input  wire        clk,
-    input  wire        rst,
+    input  wire        rst_n,
 
     input  wire [26:0] bin_in,
     input  wire        start,          // pulse to begin conversion
@@ -74,7 +74,7 @@ module bin_to_bcd (
     // Combinational next-state logic
     // -----------------------------------------------------------------------
     always @(*) begin
-        if (rst) begin
+        if (!rst_n) begin
             state_next   = S_IDLE;
             shift_next   = 59'd0;
             cnt_next     = 5'd0;

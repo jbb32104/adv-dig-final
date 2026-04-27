@@ -2,7 +2,7 @@
 
 module vga_driver (
     input  wire        clk_vga,      // 25 MHz pixel clock
-    input  wire        rst,          // synchronous reset
+    input  wire        rst_n,        // synchronous active-low reset
 
     // From vga_controller (all registered, 1-cycle latency)
     input  wire        hsync_in,
@@ -261,7 +261,7 @@ module vga_driver (
     // =========================================================================
     integer gi;
     always @(*) begin
-        if (rst) begin
+        if (!rst_n) begin
             fetch_active_next = 1'b0;
             fetch_cnt_next    = 4'd0;
             fetch_row_next    = 4'd0;
@@ -307,7 +307,7 @@ module vga_driver (
     // Pixel output with sprite overlay — combinational next-state
     // =========================================================================
     always @(*) begin
-        if (rst) begin
+        if (!rst_n) begin
             vga_hs_next    = 1'b0;
             vga_vs_next    = 1'b0;
             vga_r_next     = 4'd0;
@@ -328,10 +328,10 @@ module vga_driver (
                 pixel_sel_next = 1'b0;
             end else if (in_text_line) begin
                 if (fifo_empty) begin
-                    // FIFO underrun: magenta (visible debug indicator)
-                    vga_r_next = 4'hF;
-                    vga_g_next = 4'h0;
-                    vga_b_next = 4'hF;
+                    // FIFO underrun: output background color (black)
+                    vga_r_next = bg_r;
+                    vga_g_next = bg_g;
+                    vga_b_next = bg_b;
                 end else begin
                     // Text pixel from FIFO
                     vga_r_next     = pixel_r;
