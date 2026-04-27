@@ -2,7 +2,7 @@
 
 module vga_driver (
     input  wire        clk_vga,      // 25 MHz pixel clock
-    input  wire        rst,          // synchronous reset
+    input  wire        rst_n,        // synchronous active-low reset
 
     // From vga_controller (all registered, 1-cycle latency)
     input  wire        hsync_in,
@@ -261,7 +261,7 @@ module vga_driver (
     // =========================================================================
     integer gi;
     always @(*) begin
-        if (rst) begin
+        if (!rst_n) begin
             fetch_active_next = 1'b0;
             fetch_cnt_next    = 4'd0;
             fetch_row_next    = 4'd0;
@@ -307,7 +307,7 @@ module vga_driver (
     // Pixel output with sprite overlay — combinational next-state
     // =========================================================================
     always @(*) begin
-        if (rst) begin
+        if (!rst_n) begin
             vga_hs_next    = 1'b0;
             vga_vs_next    = 1'b0;
             vga_r_next     = 4'd0;

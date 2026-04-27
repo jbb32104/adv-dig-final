@@ -46,7 +46,7 @@ module keypad_top (
 
     column_driver u_col_drv (
         .clk    (clk),
-        .rst    (rst),
+        .rst_n  (rst_sync_n),
         .freeze (freeze),
         .c_0    (JA9),
         .c_1    (JA3),
@@ -84,7 +84,7 @@ module keypad_top (
 
     row_reader u_row_rdr (
         .clk             (clk),
-        .rst             (rst),
+        .rst_n           (rst_sync_n),
         .row_0           (r0_clean),
         .row_1           (r1_clean),
         .row_2           (r2_clean),

@@ -200,6 +200,7 @@ module mode_fsm #(
             next_timer_freeze        = 1'b1;  // frozen until computation starts
             next_done                = 1'b0;
             next_is_prime_result     = 1'b0;
+            next_state_out           = IDLE;
         end else begin
             case (state_ff)
 

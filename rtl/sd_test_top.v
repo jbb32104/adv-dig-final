@@ -299,7 +299,7 @@ module sd_test_top (
 
     bin_to_bcd u_bcd (
         .clk        (clk),
-        .rst        (~sys_rst_n),
+        .rst_n      (sys_rst_n),
         .bin_in     (display_val[26:0]),
         .start      (bcd_start),
         .bcd_out_ff (bcd_out),

@@ -26,7 +26,7 @@ module keypad_nav #(
     parameter COOLDOWN_CYCLES = 25_000_000  // 250 ms at 100 MHz
 ) (
     input  wire        clk,
-    input  wire        rst,
+    input  wire        rst_n,
 
     // Keypad input (from row_reader, clk domain)
     input  wire [3:0]  button,
@@ -91,7 +91,7 @@ module keypad_nav #(
         // Rising edge of button_valid, suppressed during cooldown
         bv_rising = button_valid && !bv_prev_ff && (cooldown_ff == 25'd0);
 
-        if (rst) begin
+        if (!rst_n) begin
             screen_id_next   = SCR_HOME;
             mode_sel_next    = 2'd0;
             go_next          = 1'b0;

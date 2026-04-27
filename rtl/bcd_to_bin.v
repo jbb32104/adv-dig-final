@@ -18,7 +18,7 @@
 
 module bcd_to_bin (
     input  wire        clk,
-    input  wire        rst,
+    input  wire        rst_n,
 
     input  wire [31:0] bcd_digits,    // 8 BCD digits: d7[31:28] .. d0[3:0]
     input  wire        start,          // pulse to begin conversion
@@ -75,7 +75,7 @@ module bcd_to_bin (
     reg        valid_next;
 
     always @(*) begin
-        if (rst) begin
+        if (!rst_n) begin
             d0_next = 4'd0; d1_next = 4'd0; d2_next = 4'd0; d3_next = 4'd0;
             d4_next = 4'd0; d5_next = 4'd0; d6_next = 4'd0; d7_next = 4'd0;
             p1_next = 28'd0; p2_next = 28'd0; p3_next = 28'd0; p4_next = 28'd0;

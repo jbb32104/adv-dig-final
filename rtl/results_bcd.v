@@ -71,7 +71,7 @@ module results_bcd #(
 
     bin_to_bcd9 u_conv (
         .clk       (clk),
-        .rst       (~rst_n),
+        .rst_n     (rst_n),
         .bin_in    (conv_bin_ff),
         .start     (conv_start_ff),
         .bcd_out_ff(conv_bcd),

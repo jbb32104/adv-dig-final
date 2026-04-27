@@ -1,6 +1,8 @@
+`timescale 1ns / 1ps
+
 module vga_controller (
     input  wire clk_25MHz, // The pixel clock
-    input  wire rst,       // Synchronous reset
+    input  wire rst_n,     // Synchronous active-low reset
     
     output reg hsync_ff,     // Horizontal sync pulse to the VGA port
     output reg vsync_ff,     // Vertical sync pulse to the VGA port
@@ -56,7 +58,7 @@ module vga_controller (
         video_on_next = 1'b0;
 
         // 2. Reset Handler
-        if (rst) begin
+        if (!rst_n) begin
             // All combinational next-state variables go to 0 on reset
             h_count_next  = 10'd0;
             hsync_next    = 1'b0;

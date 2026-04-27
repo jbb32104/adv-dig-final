@@ -18,7 +18,7 @@
 
 module digit_entry (
     input  wire        clk,
-    input  wire        rst,
+    input  wire        rst_n,
 
     // Screen context (from keypad_nav)
     input  wire [2:0]  screen_id,
@@ -61,9 +61,12 @@ module digit_entry (
     // -----------------------------------------------------------------------
     // Is the current screen a digit-entry screen?
     // -----------------------------------------------------------------------
-    wire is_entry_screen = (screen_id == SCR_NMAX) ||
-                           (screen_id == SCR_TIME) ||
-                           (screen_id == SCR_SINGLE);
+    reg is_entry_screen;
+    always @(*) begin
+        is_entry_screen = (screen_id == SCR_NMAX) ||
+                          (screen_id == SCR_TIME) ||
+                          (screen_id == SCR_SINGLE);
+    end
 
     // -----------------------------------------------------------------------
     // Next-state signals
@@ -75,7 +78,7 @@ module digit_entry (
     reg [2:0]  prev_sid_next;
 
     always @(*) begin
-        if (rst) begin
+        if (!rst_n) begin
             bcd_digits_next = 32'd0;
             cursor_pos_next = 4'd0;
             changed_next    = 1'b0;
@@ -124,7 +127,7 @@ module digit_entry (
     end
 
     // -----------------------------------------------------------------------
-    // Sequential block
+    // Sequential block — flops only
     // -----------------------------------------------------------------------
     always @(posedge clk) begin
         bcd_digits_ff <= bcd_digits_next;
